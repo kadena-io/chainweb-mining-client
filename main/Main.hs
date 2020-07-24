@@ -122,7 +122,7 @@ defaultHashRate = 1_000_000
 -- are not supported.
 --
 -- Only a single base64UrlWithoutPadding encoded key may be used and the keyset
--- is "<".
+-- is "keys-all".
 --
 newtype MinerPublicKey = MinerPublicKey T.Text
     deriving (Show, Eq, Ord, Generic)
@@ -145,7 +145,7 @@ instance ToJSON Miner where
     toJSON (Miner (MinerPublicKey k)) = object
         [ "account" .= k
         , "public-keys" .= [ k ]
-        , "predicate" .= ("<" :: T.Text)
+        , "predicate" .= ("keys-all" :: T.Text)
         ]
 
 -- -------------------------------------------------------------------------- --
