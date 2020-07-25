@@ -233,7 +233,7 @@ parseConfig = id
     <$< configHashRate .:: option auto
         % short 'r'
         <> long "hash-rate"
-        <> help "hashes per second"
+        <> help "hashes per second (only relevant for mining simulation, ignored by the cpu worker)"
     <*< configNode .:: option (textReader hostAddressFromText)
         % short 'n'
         <> long "node"
