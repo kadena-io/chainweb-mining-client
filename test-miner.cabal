@@ -34,6 +34,9 @@ executable test-miner
     other-modules:
         PkgInfo
         Logger
+        Worker
+        Worker.CPU
+        Worker.Simulation
     autogen-modules:
         PkgInfo
     default-language: Haskell2010

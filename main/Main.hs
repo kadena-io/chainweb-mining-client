@@ -39,6 +39,7 @@ import Control.Monad.Catch
 import Control.Monad.IO.Class
 
 import qualified Crypto.PubKey.Ed25519 as C
+import Crypto.Hash.Algorithms (Blake2s_256)
 
 import Data.Bifunctor
 import qualified Data.ByteArray.Encoding as BA
@@ -72,13 +73,15 @@ import qualified Streaming.Prelude as SP
 
 import System.LogLevel
 import qualified System.Random.MWC as MWC
-import qualified System.Random.MWC.Distributions as MWC
 
 import Text.Printf
 
 -- internal modules
 
 import Logger
+import Worker
+import Worker.Simulation
+import Worker.CPU
 
 -- -------------------------------------------------------------------------- --
 -- Orphans
@@ -101,17 +104,6 @@ textReader p = eitherReader $ first show . p . T.pack
 sshow :: Show a => IsString b => a -> b
 sshow = fromString . show
 {-# INLINE sshow #-}
-
--- -------------------------------------------------------------------------- --
--- HashRate
-
-newtype HashRate = HashRate Double
-    deriving (Show, Eq, Ord, Generic)
-    deriving newtype (Read, Num, Fractional, Floating, Real, Enum, Hashable, ToJSON, FromJSON)
-
--- | Default is 1MH
-defaultHashRate :: HashRate
-defaultHashRate = 1_000_000
 
 -- -------------------------------------------------------------------------- --
 -- Miner
@@ -147,6 +139,34 @@ instance ToJSON Miner where
         ]
 
 -- -------------------------------------------------------------------------- --
+-- Worker Configuration
+
+data WorkerConfig
+    = CpuWorker
+    | SimulationWorker
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
+
+instance ToJSON WorkerConfig where
+    toJSON = toJSON . workerConfigToText
+    {-# INLINE toJSON #-}
+
+instance FromJSON WorkerConfig where
+    parseJSON = withText "WorkerConfig" $
+        either (fail . show) return . workerConfigFromText
+    {-# INLINE parseJSON #-}
+
+workerConfigToText :: WorkerConfig -> T.Text
+workerConfigToText CpuWorker = "cpu"
+workerConfigToText SimulationWorker = "simulation"
+
+workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
+workerConfigFromText t = case T.toCaseFold t of
+    "cpu" -> return CpuWorker
+    "simulation" -> return SimulationWorker
+    _ -> error $ "unknown worker configuraton: " <> T.unpack t
+
+-- -------------------------------------------------------------------------- --
 -- Configuration
 
 newtype ChainwebVersion = ChainwebVersion T.Text
@@ -162,6 +182,7 @@ data Config = Config
     , _configThreadCount :: !Natural
     , _configGenerateKey :: !Bool
     , _configLogLevel :: !LogLevel
+    , _configWorker :: !WorkerConfig
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -177,6 +198,7 @@ defaultConfig = Config
     , _configThreadCount = 10
     , _configGenerateKey = False
     , _configLogLevel = Info
+    , _configWorker = CpuWorker
     }
 
 instance ToJSON Config where
@@ -189,6 +211,7 @@ instance ToJSON Config where
         , "threadCount" .= _configThreadCount c
         , "generateKey" .= _configGenerateKey c
         , "logLevel" .= logLevelToText @T.Text (_configLogLevel c)
+        , "worker" .= _configWorker c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -201,6 +224,7 @@ instance FromJSON (Config -> Config) where
         <*< configThreadCount ..: "threadCount" % o
         <*< configGenerateKey ..: "generateKey" % o
         <*< setProperty configLogLevel "logLevel" parseLogLevel o
+        <*< configWorker ..: "worker" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -239,21 +263,14 @@ parseConfig = id
         <> long "log-level"
         <> help "Level at which log messages are written to the console"
         <> metavar "error|warn|info|debug"
+    <*< configWorker .:: option (textReader workerConfigFromText)
+        % short 'w'
+        <> long "worker"
+        <> help "The type of mining worker that is used"
+        <> metavar "cpu|simulation"
 
 -- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Types
-
--- | Hash target. A little endian encoded 256 bit (unsigned) word.
---
-newtype Target = Target BS.ShortByteString
-    deriving (Show, Eq, Ord, Generic)
-    deriving newtype (Hashable)
-
-decodeTarget :: MonadGet m => m Target
-decodeTarget = Target . BS.toShort <$> getBytes 32
-
-encodeTarget :: MonadPut m => Target -> m ()
-encodeTarget (Target b) = putByteString $ BS.fromShort b
 
 -- | ChainId
 --
@@ -266,21 +283,6 @@ decodeChainId = ChainId <$> getWord32le
 
 encodeChainId :: MonadPut m => ChainId -> m ()
 encodeChainId (ChainId w32) = putWord32le w32
-
--- | Work bytes. The last 8 bytes are the nonce that is updated by the miner
--- while solving the work.
---
-newtype Work = Work BS.ShortByteString
-    deriving (Show, Eq, Ord, Generic)
-    deriving newtype (Hashable)
-
-decodeWork :: MonadGet m => m (ChainId, Target, Work)
-decodeWork = (,,)
-    <$> decodeChainId
-    <*> decodeTarget
-    <*> do
-        l <- fromIntegral <$> remaining
-        Work . BS.toShort <$> getByteString l
 
 -- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Requetss
@@ -339,10 +341,10 @@ getNodeVersion conf mgr = do
 
 -- | Get new work from the chainweb node (for some available chain)
 --
-getWork :: Config -> ChainwebVersion -> HTTP.Manager -> IO (ChainId, Target, Work)
-getWork conf ver mgr = do
+getJob :: Config -> ChainwebVersion -> HTTP.Manager -> IO (ChainId, Target, Work)
+getJob conf ver mgr = do
     bytes <- HTTP.httpLbs req mgr
-    case runGetS decodeWork (BL.toStrict $ HTTP.responseBody $ bytes) of
+    case runGetS decodeJob (BL.toStrict $ HTTP.responseBody $ bytes) of
         Left e -> error $ "failed to decode work: " <> sshow e
         Right (a,b,c) -> return (a, b, c)
   where
@@ -350,6 +352,12 @@ getWork conf ver mgr = do
         { HTTP.requestBody = HTTP.RequestBodyLBS $ encode $ Miner $ _configPublicKey conf
         , HTTP.requestHeaders = [("content-type", "application/json")]
         }
+
+    decodeJob :: MonadGet m => m (ChainId, Target, Work)
+    decodeJob = (,,)
+        <$> decodeChainId
+        <*> decodeTarget
+        <*> decodeWork
 
 -- | Post solved work to the chainweb node
 --
@@ -538,10 +546,11 @@ miningLoop
     -> Logger
     -> HTTP.Manager
     -> UpdateMap
-    -> (Target -> Work -> IO Work)
+    -> Worker
     -> IO ()
-miningLoop conf ver logger mgr umap inner = go
+miningLoop conf ver logger mgr umap worker = go
   where
+    nonce = Nonce 0
     logg = writeLog logger
     go = (forever loopBody `catches` handlers) >>= \case
         Irrecoverable -> return ()
@@ -567,43 +576,14 @@ miningLoop conf ver logger mgr umap inner = go
         ]
 
     loopBody = do
-        (cid, target, work) <- getWork conf ver mgr
+        (cid, target, work) <- getJob conf ver mgr
         logg Info $ "got new work for chain " <> sshow cid
-        withPreemption conf ver logger mgr umap cid (inner target work) >>= \case
+        withPreemption conf ver logger mgr umap cid (worker nonce target work) >>= \case
             Right solved -> do
                 postSolved conf ver logger mgr solved
                 logg Debug "submitted work"
             Left () ->
                 logg Info "Mining loop was preempted. Getting updated work ..."
-
--- -------------------------------------------------------------------------- --
--- Fake Mining Worker
-
--- | A fake mining worker that is not actually doing any work. It calculates the
--- solve time base on the assumed hash power of the worker thread and returns
--- the work bytes unchanged after that time has passed.
---
-fakeWorker :: Logger -> MWC.GenIO -> HashRate -> Target -> Work -> IO Work
-fakeWorker logger rng rate (Target targetBytes) work = do
-    delay <- round <$> MWC.exponential scale rng
-    logg Info $ "solve time (microseconds): " <> sshow delay
-    threadDelay delay
-    return work
-  where
-    logg = writeLog logger
-
-    -- expectedMicros = 1_000_000 * difficulty / rate
-
-    -- MWC.exponential is parameterized by the rate, i.e. 1 / expected_time
-    scale = realToFrac $ realToFrac rate / (difficulty * 1_000_000)
-
-    -- the expected number of attempts for solving a target is the difficulty.
-    difficulty :: Rational
-    difficulty = 2^(256 :: Integer) / targetNum
-
-    -- Target is an little endian encoded (unsigned) 256 bit word.
-    targetNum :: Rational
-    targetNum = foldr (\b a -> fromIntegral b + 256 * a) 0 $ BS.unpack $ targetBytes
 
 -- -------------------------------------------------------------------------- --
 -- Key generation
@@ -641,7 +621,9 @@ run conf logger = do
     forConcurrently_ [0 .. (_configThreadCount conf) - 1] $ \i ->
         withLogTag logger ("Thread " <> sshow i) $ \taggedLogger ->
             miningLoop conf ver taggedLogger mgr updateMap $
-                fakeWorker taggedLogger rng workerRate
+                case _configWorker conf of
+                    SimulationWorker -> simulationWorker taggedLogger rng workerRate
+                    CpuWorker -> cpuWorker @Blake2s_256 taggedLogger
   where
     tlsSettings = HTTP.TLSSettingsSimple (_configInsecure conf) False False
 
