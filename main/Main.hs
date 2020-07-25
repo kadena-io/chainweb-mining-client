@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
@@ -52,7 +53,6 @@ import qualified Data.HashMap.Strict as HM
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
 import Data.Word
 
 import GHC.Generics
@@ -66,7 +66,7 @@ import Network.Wai.EventSource.Streaming
 
 import Numeric.Natural
 
-import PkgInfo
+import PkgInfo hiding (tag)
 
 import qualified Streaming.Prelude as SP
 
@@ -75,6 +75,10 @@ import qualified System.Random.MWC as MWC
 import qualified System.Random.MWC.Distributions as MWC
 
 import Text.Printf
+
+-- internal modules
+
+import Logger
 
 -- -------------------------------------------------------------------------- --
 -- Orphans
@@ -97,18 +101,6 @@ textReader p = eitherReader $ first show . p . T.pack
 sshow :: Show a => IsString b => a -> b
 sshow = fromString . show
 {-# INLINE sshow #-}
-
--- -------------------------------------------------------------------------- --
--- Logging
-
-logg :: LogLevel -> T.Text -> IO ()
-logg l msg = T.putStrLn $ "[" <> sshow l <> "]" <> " " <> msg
-
-logDebug, logInfo, logWarn, logError :: T.Text -> IO ()
-logDebug = logg Debug
-logInfo = logg Info
-logWarn = logg Warn
-logError = logg Error
 
 -- -------------------------------------------------------------------------- --
 -- HashRate
@@ -169,6 +161,7 @@ data Config = Config
     , _configPublicKey :: !MinerPublicKey
     , _configThreadCount :: !Natural
     , _configGenerateKey :: !Bool
+    , _configLogLevel :: !LogLevel
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -183,6 +176,7 @@ defaultConfig = Config
     , _configPublicKey = MinerPublicKey ""
     , _configThreadCount = 10
     , _configGenerateKey = False
+    , _configLogLevel = Info
     }
 
 instance ToJSON Config where
@@ -194,6 +188,7 @@ instance ToJSON Config where
         , "publicKey" .= _configPublicKey c
         , "threadCount" .= _configThreadCount c
         , "generateKey" .= _configGenerateKey c
+        , "logLevel" .= logLevelToText @T.Text (_configLogLevel c)
         ]
 
 instance FromJSON (Config -> Config) where
@@ -205,6 +200,9 @@ instance FromJSON (Config -> Config) where
         <*< configPublicKey ..: "publicKey" % o
         <*< configThreadCount ..: "threadCount" % o
         <*< configGenerateKey ..: "generateKey" % o
+        <*< setProperty configLogLevel "logLevel" parseLogLevel o
+      where
+        parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
 parseConfig :: MParser Config
 parseConfig = id
@@ -236,6 +234,11 @@ parseConfig = id
     <*< configGenerateKey .:: boolOption_
         % long "generate-key"
         <> help "Generate a new key pair and exit"
+    <*< configLogLevel .:: option auto
+        % short 'l'
+        <> long "log-level"
+        <> help "Level at which log messages are written to the console"
+        <> metavar "error|warn|info|debug"
 
 -- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Types
@@ -350,14 +353,15 @@ getWork conf ver mgr = do
 
 -- | Post solved work to the chainweb node
 --
-postSolved :: Config -> ChainwebVersion -> HTTP.Manager -> Work -> IO ()
-postSolved conf ver mgr (Work bytes) = do
-    logInfo "post solved worked"
+postSolved :: Config -> ChainwebVersion -> Logger -> HTTP.Manager -> Work -> IO ()
+postSolved conf ver logger mgr (Work bytes) = do
+    logg Info "post solved worked"
     (void $ HTTP.httpLbs req mgr)
         `catch` \(e@(HTTP.HttpExceptionRequest _ _)) -> do
-            logError $ "failed to submit solved work: " <> sshow e
+            logg Error $ "failed to submit solved work: " <> sshow e
             return ()
   where
+    logg = writeLog logger
     req = (baseReq conf ver "mining/solved")
         { HTTP.requestBody = HTTP.RequestBodyBS $ BS.fromShort $ bytes
         , HTTP.method = "POST"
@@ -369,16 +373,19 @@ postSolved conf ver mgr (Work bytes) = do
 updateStream
     :: Config
     -> ChainwebVersion
+    -> Logger
     -> HTTP.Manager
     -> ChainId
     -> TVar Int
     -> IO ()
-updateStream conf v mgr cid var =
+updateStream conf v logger mgr cid var =
     liftIO $ withEvents req mgr $ \updates -> updates
         & SP.filter realEvent
-        & SP.chain (\_ -> logInfo $ "got update on chain " <> sshow cid)
+        & SP.chain (\_ -> logg Info $ "got update on chain " <> sshow cid)
         & SP.mapM_ (\_ -> atomically $ modifyTVar' var (+ 1))
   where
+    logg = writeLog logger
+
     realEvent ServerEvent{} = True
     realEvent _ = False
 
@@ -428,17 +435,18 @@ newUpdateMap = UpdateMap <$> newMVar mempty
 getTrigger
     :: Config
     -> ChainwebVersion
+    -> Logger
     -> HTTP.Manager
     -> UpdateMap
     -> ChainId
     -> IO Trigger
-getTrigger conf ver mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
+getTrigger conf ver logger mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
 
     -- If there exists already an update stream, check that it's live, and
     -- restart if necessary.
     --
     Just s -> do
-        logDebug "use existing update stream"
+        logg Debug "use existing update stream"
         n@(!var, !a) <- checkStream s
         !t <- newTrigger var a
         let !x = HM.insert k n m
@@ -447,12 +455,14 @@ getTrigger conf ver mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k 
     -- If there isn't an update stream in the map, create a new one.
     --
     Nothing -> do
-        logDebug "create new update stream"
+        logg Debug "create new update stream"
         n@(!var, !a) <- newTVarIO 0 >>= newUpdateStream
         !t <- newTrigger var a
         let !x = HM.insert k n m
         return (x, t)
   where
+    logg = writeLog logger
+
     checkStream :: (TVar Int, Async ()) -> IO (TVar Int, Async ())
     checkStream (!var, !a) = poll a >>= \case
         Nothing -> return (var, a)
@@ -461,7 +471,7 @@ getTrigger conf ver mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k 
 
     newUpdateStream :: TVar Int -> IO (TVar Int, Async ())
     newUpdateStream var = (var,)
-        <$> async (updateStream conf ver mgr k var)
+        <$> async (updateStream conf ver logger mgr k var)
 
     -- There are three possible outcomes
     --
@@ -495,15 +505,16 @@ getTrigger conf ver mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k 
 withPreemption
     :: Config
     -> ChainwebVersion
+    -> Logger
     -> HTTP.Manager
     -> UpdateMap
     -> ChainId
     -> IO a
     -> IO (Either () a)
-withPreemption conf ver mgr m k = race awaitChange
+withPreemption conf ver logger mgr m k = race awaitChange
   where
     awaitChange = do
-        trigger <- getTrigger conf ver mgr m k
+        trigger <- getTrigger conf ver logger mgr m k
         awaitTrigger trigger >>= \case
             StreamClosed -> awaitChange
             StreamFailed e -> throwM $ UpdateFailure $ "update stream failed: " <> errMsg e
@@ -524,44 +535,46 @@ data Recovery = Irrecoverable | Recoverable
 miningLoop
     :: Config
     -> ChainwebVersion
+    -> Logger
     -> HTTP.Manager
     -> UpdateMap
     -> (Target -> Work -> IO Work)
     -> IO ()
-miningLoop conf ver mgr umap inner = go
+miningLoop conf ver logger mgr umap inner = go
   where
+    logg = writeLog logger
     go = (forever loopBody `catches` handlers) >>= \case
         Irrecoverable -> return ()
         Recoverable -> threadDelay 500_000 >> go
 
     handlers =
         [ Handler $ \(e :: IOException) -> do
-            logError $ T.pack $ displayException e
+            logg Error $ T.pack $ displayException e
             return Irrecoverable
         , Handler $ \(e :: UpdateFailure) -> do
-            logError $ T.pack $ displayException e
+            logg Error $ T.pack $ displayException e
             return Irrecoverable
         , Handler $ \(e :: GetWorkFailure) -> do
-            logError $ T.pack $ displayException e
+            logg Error $ T.pack $ displayException e
             return Irrecoverable
         , Handler $ \(e :: SomeAsyncException) -> do
-            logWarn $ "Mining Loop terminated: " <> sshow e
+            logg Warn $ "Mining Loop terminated: " <> sshow e
             throwM e
         , Handler $ \(e :: SomeException) -> do
-            logWarn "Some general error in mining loop. Trying again..."
-            logDebug $ T.pack $ displayException e
+            logg Warn "Some general error in mining loop. Trying again..."
+            logg Info $ "Exception: " <> T.pack (displayException e)
             return Recoverable
         ]
 
     loopBody = do
         (cid, target, work) <- getWork conf ver mgr
-        logInfo $ "got new work for chain " <> sshow cid
-        withPreemption conf ver mgr umap cid (inner target work) >>= \case
+        logg Info $ "got new work for chain " <> sshow cid
+        withPreemption conf ver logger mgr umap cid (inner target work) >>= \case
             Right solved -> do
-                postSolved conf ver mgr solved
-                logInfo "submitted work"
+                postSolved conf ver logger mgr solved
+                logg Debug "submitted work"
             Left () ->
-                logInfo "Mining loop was preempted. Getting updated work ..."
+                logg Info "Mining loop was preempted. Getting updated work ..."
 
 -- -------------------------------------------------------------------------- --
 -- Fake Mining Worker
@@ -570,13 +583,15 @@ miningLoop conf ver mgr umap inner = go
 -- solve time base on the assumed hash power of the worker thread and returns
 -- the work bytes unchanged after that time has passed.
 --
-fakeWorker :: MWC.GenIO -> HashRate -> Target -> Work -> IO Work
-fakeWorker rng rate (Target targetBytes) work = do
+fakeWorker :: Logger -> MWC.GenIO -> HashRate -> Target -> Work -> IO Work
+fakeWorker logger rng rate (Target targetBytes) work = do
     delay <- round <$> MWC.exponential scale rng
-    logInfo $ "solve time (microseconds): " <> sshow delay
+    logg Info $ "solve time (microseconds): " <> sshow delay
     threadDelay delay
     return work
   where
+    logg = writeLog logger
+
     -- expectedMicros = 1_000_000 * difficulty / rate
 
     -- MWC.exponential is parameterized by the rate, i.e. 1 / expected_time
@@ -615,16 +630,18 @@ main :: IO ()
 main = runWithPkgInfoConfiguration mainInfo pkgInfo $ \conf ->
     if _configGenerateKey conf
       then genKeys
-      else run conf
+      else withLogger (_configLogLevel conf) $ run conf
 
-run :: Config -> IO ()
-run conf = do
+run :: Config -> Logger -> IO ()
+run conf logger = do
     mgr <- HTTP.newManager $ HTTP.mkManagerSettings tlsSettings Nothing
     ver <- getNodeVersion conf mgr
     rng <- MWC.createSystemRandom
     updateMap <- newUpdateMap
-    replicateConcurrently_ (fromIntegral $ _configThreadCount conf) $
-        miningLoop conf ver mgr updateMap $ fakeWorker rng workerRate
+    forConcurrently_ [0 .. (_configThreadCount conf) - 1] $ \i ->
+        withLogTag logger ("Thread " <> sshow i) $ \taggedLogger ->
+            miningLoop conf ver taggedLogger mgr updateMap $
+                fakeWorker taggedLogger rng workerRate
   where
     tlsSettings = HTTP.TLSSettingsSimple (_configInsecure conf) False False
 
