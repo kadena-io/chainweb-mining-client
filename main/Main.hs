@@ -37,10 +37,14 @@ import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 
+import qualified Crypto.PubKey.Ed25519 as C
+
 import Data.Bifunctor
+import qualified Data.ByteArray.Encoding as BA
 import Data.Bytes.Get
 import Data.Bytes.Put
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
@@ -69,6 +73,8 @@ import qualified Streaming.Prelude as SP
 import System.LogLevel
 import qualified System.Random.MWC as MWC
 import qualified System.Random.MWC.Distributions as MWC
+
+import Text.Printf
 
 -- -------------------------------------------------------------------------- --
 -- Orphans
@@ -162,6 +168,7 @@ data Config = Config
     , _configInsecure :: !Bool
     , _configPublicKey :: !MinerPublicKey
     , _configThreadCount :: !Natural
+    , _configGenerateKey :: !Bool
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -175,6 +182,7 @@ defaultConfig = Config
     , _configInsecure = True
     , _configPublicKey = MinerPublicKey ""
     , _configThreadCount = 10
+    , _configGenerateKey = False
     }
 
 instance ToJSON Config where
@@ -185,6 +193,7 @@ instance ToJSON Config where
         , "insecure" .= _configInsecure c
         , "publicKey" .= _configPublicKey c
         , "threadCount" .= _configThreadCount c
+        , "generateKey" .= _configGenerateKey c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -195,6 +204,7 @@ instance FromJSON (Config -> Config) where
         <*< configInsecure ..: "insecure" % o
         <*< configPublicKey ..: "publicKey" % o
         <*< configThreadCount ..: "threadCount" % o
+        <*< configGenerateKey ..: "generateKey" % o
 
 parseConfig :: MParser Config
 parseConfig = id
@@ -223,6 +233,9 @@ parseConfig = id
         % short 'c'
         <> long "thread-count"
         <> help "number of concurrent mining threads"
+    <*< configGenerateKey .:: boolOption_
+        % long "generate-key"
+        <> help "Generate a new key pair and exit"
 
 -- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Types
@@ -578,6 +591,16 @@ fakeWorker rng rate (Target targetBytes) work = do
     targetNum = foldr (\b a -> fromIntegral b + 256 * a) 0 $ BS.unpack $ targetBytes
 
 -- -------------------------------------------------------------------------- --
+-- Key generation
+
+genKeys :: IO ()
+genKeys = do
+    sk <- C.generateSecretKey
+    let !pk = C.toPublic sk
+    printf "public:  %s\n" (B8.unpack $ BA.convertToBase BA.Base16 pk)
+    printf "private: %s\n" (B8.unpack $ BA.convertToBase BA.Base16 sk)
+
+-- -------------------------------------------------------------------------- --
 -- Main
 
 mainInfo :: ProgramInfo Config
@@ -590,7 +613,9 @@ mainInfo = programInfo "Chainweb Test Miner for simulating POW" parseConfig defa
 --
 main :: IO ()
 main = runWithPkgInfoConfiguration mainInfo pkgInfo $ \conf ->
-    run conf
+    if _configGenerateKey conf
+      then genKeys
+      else run conf
 
 run :: Config -> IO ()
 run conf = do
