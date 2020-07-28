@@ -36,6 +36,7 @@ executable test-miner
         Logger
         Worker
         Worker.CPU
+        Worker.External
         Worker.Simulation
     autogen-modules:
         PkgInfo
@@ -63,6 +64,7 @@ executable test-miner
         , loglevel >=0.1
         , memory >=0.15
         , mwc-random >=0.14
+        , process >=1.6
         , stm >=2.5
         , streaming >=0.2
         , streaming-events >=1.0

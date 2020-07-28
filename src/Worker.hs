@@ -20,6 +20,7 @@ module Worker
   Target(..)
 , encodeTarget
 , decodeTarget
+, targetToText16
 
 -- * Mining Work
 , Work(..)
@@ -33,10 +34,13 @@ module Worker
 , Worker
 ) where
 
+import qualified Data.ByteArray.Encoding as BA
 import Data.Bytes.Get
 import Data.Bytes.Put
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Word
 
 import GHC.Generics
@@ -48,15 +52,23 @@ import GHC.Generics
 --
 -- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
 --
-newtype Target = Target BS.ShortByteString
+newtype Target = Target { _targetBytes :: BS.ShortByteString }
     deriving (Show, Eq, Ord, Generic)
     deriving newtype (Hashable)
 
 decodeTarget :: MonadGet m => m Target
 decodeTarget = Target . BS.toShort <$> getBytes 32
+{-# INLINE decodeTarget #-}
 
 encodeTarget :: MonadPut m => Target -> m ()
 encodeTarget (Target b) = putByteString $ BS.fromShort b
+{-# INLINE encodeTarget #-}
+
+-- | Represent target bytes in hexadecimal base
+--
+targetToText16 :: Target -> T.Text
+targetToText16 = T.decodeUtf8 . BA.convertToBase BA.Base16 . BS.fromShort . _targetBytes
+{-# INLINE targetToText16 #-}
 
 -- -------------------------------------------------------------------------- --
 -- Work
@@ -72,9 +84,11 @@ newtype Work = Work BS.ShortByteString
 
 decodeWork :: MonadGet m => m Work
 decodeWork = Work . BS.toShort <$> getBytes 286
+{-# INLINE decodeWork #-}
 
 encodeWork :: MonadPut m => Work -> m ()
 encodeWork (Work b) = putByteString $ BS.fromShort b
+{-# INLINE encodeWork #-}
 
 -- -------------------------------------------------------------------------- --
 -- Nonce

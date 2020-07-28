@@ -31,6 +31,8 @@ import qualified Data.Text.IO as T
 import Data.Time.Clock.System
 import Data.Time.Format.ISO8601
 
+import System.IO
+import System.IO.Unsafe
 import System.LogLevel
 
 -- -------------------------------------------------------------------------- --
@@ -50,6 +52,33 @@ decrementCounter ref = atomicModifyIORef' ref $ \x -> (x - 1, ())
 
 resetCounter :: IORef Int -> IO Int
 resetCounter ref = atomicModifyIORef' ref $ \x -> (0, x)
+
+-- -------------------------------------------------------------------------- --
+-- Terminal Colors
+
+useColor :: Bool
+useColor = unsafePerformIO $ hIsTerminalDevice stdout
+
+data Color = Black | Red  | Green | Yellow | Blue | Magenta | Cyan | White
+
+colorCode :: Color -> Int
+colorCode Black = 0
+colorCode Red = 1
+colorCode Green = 2
+colorCode Yellow = 3
+colorCode Blue = 4
+colorCode Magenta = 5
+colorCode Cyan = 6
+colorCode White = 7
+
+asDull, asVivid  :: Color -> T.Text -> T.Text
+asDull c t = setCode (30 + colorCode c) <> t <> setCode 0
+asVivid c t = setCode (90 + colorCode c) <> t <> setCode 0
+
+setCode :: Int -> T.Text
+setCode c
+    | useColor = "\ESC[" <> (T.pack . show) c <> "m"
+    | otherwise = ""
 
 -- -------------------------------------------------------------------------- --
 --  Log Messages
@@ -78,19 +107,27 @@ data LogMessage = LogMessage
 --
 formatLogMessage :: LogMessage -> T.Text
 formatLogMessage !msg =
-    (padTime . T.pack . iso8601Show . systemToUTCTime $ _logMessageTime msg)
+    asDull Cyan (padTime . T.pack . iso8601Show . systemToUTCTime $ _logMessageTime msg)
     <> " "
-    <> bracketed (logLevelToText (_logMessageLevel msg))
+    <> formatLogLevel (_logMessageLevel msg)
+    <> " "
     <> bracketed (formatTags (_logMessageTags msg))
     <> " "
     <> _logMessageText msg
   where
-    formatTags tags = T.intercalate "|" $ reverse tags
+    formatTags tags = T.intercalate "|" $ asDull Green <$> reverse tags
     bracketed t = "[" <> t <> "]"
 
     padTime t
         | T.length t == 28 = t
         | otherwise = T.take 27 (T.drop 1 t <> "000000") <> "Z"
+
+    formatLogLevel Quiet = "Quiet"
+    formatLogLevel Debug = asVivid Blue "Debug"
+    formatLogLevel Info = asVivid Yellow "Info "
+    formatLogLevel Warn = asVivid Magenta "Warn "
+    formatLogLevel Error = asVivid Red "Error"
+    formatLogLevel (Other x) = asVivid Blue x
 
 -- -------------------------------------------------------------------------- --
 -- Logger Context

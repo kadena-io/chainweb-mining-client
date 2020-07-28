@@ -80,8 +80,9 @@ import Text.Printf
 
 import Logger
 import Worker
-import Worker.Simulation
 import Worker.CPU
+import Worker.External
+import Worker.Simulation
 
 -- -------------------------------------------------------------------------- --
 -- Orphans
@@ -143,6 +144,7 @@ instance ToJSON Miner where
 
 data WorkerConfig
     = CpuWorker
+    | ExternalWorker
     | SimulationWorker
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (Hashable)
@@ -158,11 +160,13 @@ instance FromJSON WorkerConfig where
 
 workerConfigToText :: WorkerConfig -> T.Text
 workerConfigToText CpuWorker = "cpu"
+workerConfigToText ExternalWorker = "external"
 workerConfigToText SimulationWorker = "simulation"
 
 workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
 workerConfigFromText t = case T.toCaseFold t of
     "cpu" -> return CpuWorker
+    "external" -> return ExternalWorker
     "simulation" -> return SimulationWorker
     _ -> error $ "unknown worker configuraton: " <> T.unpack t
 
@@ -183,6 +187,7 @@ data Config = Config
     , _configGenerateKey :: !Bool
     , _configLogLevel :: !LogLevel
     , _configWorker :: !WorkerConfig
+    , _configExternalWorkerCommand :: !String
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -199,6 +204,7 @@ defaultConfig = Config
     , _configGenerateKey = False
     , _configLogLevel = Info
     , _configWorker = CpuWorker
+    , _configExternalWorkerCommand = "echo 'no external worker command configured' && /bin/false"
     }
 
 instance ToJSON Config where
@@ -212,6 +218,7 @@ instance ToJSON Config where
         , "generateKey" .= _configGenerateKey c
         , "logLevel" .= logLevelToText @T.Text (_configLogLevel c)
         , "worker" .= _configWorker c
+        , "externalWorkerCommand" .= _configExternalWorkerCommand c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -225,6 +232,7 @@ instance FromJSON (Config -> Config) where
         <*< configGenerateKey ..: "generateKey" % o
         <*< setProperty configLogLevel "logLevel" parseLogLevel o
         <*< configWorker ..: "worker" % o
+        <*< configExternalWorkerCommand ..: "externalWorkerCommand" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -258,7 +266,7 @@ parseConfig = id
     <*< configGenerateKey .:: boolOption_
         % long "generate-key"
         <> help "Generate a new key pair and exit"
-    <*< configLogLevel .:: option auto
+    <*< configLogLevel .:: option (textReader $ Right . logLevelFromText)
         % short 'l'
         <> long "log-level"
         <> help "Level at which log messages are written to the console"
@@ -268,6 +276,9 @@ parseConfig = id
         <> long "worker"
         <> help "The type of mining worker that is used"
         <> metavar "cpu|simulation"
+    <*< configExternalWorkerCommand .:: option (textReader $ Right . T.unpack)
+        % long "external-worker-cmd"
+        <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
 
 -- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Types
@@ -623,6 +634,7 @@ run conf logger = do
             miningLoop conf ver taggedLogger mgr updateMap $
                 case _configWorker conf of
                     SimulationWorker -> simulationWorker taggedLogger rng workerRate
+                    ExternalWorker -> externalWorker taggedLogger (_configExternalWorkerCommand conf)
                     CpuWorker -> cpuWorker @Blake2s_256 taggedLogger
   where
     tlsSettings = HTTP.TLSSettingsSimple (_configInsecure conf) False False
