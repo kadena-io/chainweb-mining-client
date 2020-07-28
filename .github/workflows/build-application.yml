@@ -77,7 +77,7 @@ jobs:
         mkdir -p artifacts/applications
         export VER=$(grep '^version' test-miner.cabal | sed -e 's/.*: *//')
         cp $(find dist-newstyle/ -name 'test-miner' -type f) artifacts/applications
-        cp README.org artifacts/applications
+        cp README.md artifacts/applications
         cp CHANGELOG.md artifacts/applications
         cp LICENSE artifacts/applications
         cp test-miner.cabal artifacts/applications
