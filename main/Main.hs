@@ -571,12 +571,12 @@ miningLoop conf ver logger mgr umap worker = go
         [ Handler $ \(e :: IOException) -> do
             logg Error $ T.pack $ displayException e
             return Irrecoverable
-        , Handler $ \(e :: UpdateFailure) -> do
-            logg Error $ T.pack $ displayException e
-            return Irrecoverable
         , Handler $ \(e :: GetWorkFailure) -> do
             logg Error $ T.pack $ displayException e
-            return Irrecoverable
+            return Irrecoverable -- FIXME we want proper retry logic for all of this!
+        , Handler $ \(e :: UpdateFailure) -> do
+            logg Error $ T.pack $ displayException e
+            return Recoverable
         , Handler $ \(e :: SomeAsyncException) -> do
             logg Warn $ "Mining Loop terminated: " <> sshow e
             throwM e
