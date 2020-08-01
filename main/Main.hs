@@ -37,9 +37,10 @@ import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
+import Control.Retry
 
-import qualified Crypto.PubKey.Ed25519 as C
 import Crypto.Hash.Algorithms (Blake2s_256)
+import qualified Crypto.PubKey.Ed25519 as C
 
 import Data.Bifunctor
 import qualified Data.ByteArray.Encoding as BA
@@ -62,6 +63,7 @@ import qualified Network.Connection as HTTP
 import Network.HostAddress
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as HTTP
+import qualified Network.HTTP.Types.Status as HTTP
 import Network.Wai.EventSource.EventStream
 import Network.Wai.EventSource.Streaming
 
@@ -74,7 +76,10 @@ import qualified Streaming.Prelude as SP
 import System.LogLevel
 import qualified System.Random.MWC as MWC
 
+import qualified Text.ParserCombinators.ReadP as R
+import qualified Text.ParserCombinators.ReadPrec as P
 import Text.Printf
+import Text.Read (Read(..), readListPrecDefault)
 
 -- internal modules
 
@@ -105,6 +110,72 @@ textReader p = eitherReader $ first show . p . T.pack
 sshow :: Show a => IsString b => a -> b
 sshow = fromString . show
 {-# INLINE sshow #-}
+
+-- -------------------------------------------------------------------------- --
+-- Integral Unit Prefixes
+
+-- | TODO: make this type roundtripable and add support for fractional unit
+-- prefixes.
+--
+newtype UnitPrefixed a = UnitPrefixed { _getUnitPrefixed :: a }
+    deriving newtype
+        ( Show
+        , Eq
+        , Ord
+        , Enum
+        , Bounded
+        , Num
+        , Integral
+        , Fractional
+        , Floating
+        , Real
+        , ToJSON
+        , FromJSON
+        )
+
+instance (Num a, Read a) => Read (UnitPrefixed a) where
+    readPrec = UnitPrefixed <$> readWithUnit
+    readListPrec = readListPrecDefault
+    {-# INLINE readPrec #-}
+    {-# INLINE readListPrec #-}
+
+-- | Read number with Unit Prefixes. The implementation supports integral SI
+-- units prefixes. Binary prefixes are supported according to ISO/IEC 80000.
+--
+-- "Kilo" is supported, both in upper and lower case.
+--
+readWithUnit :: forall a . Num a => Read a => P.ReadPrec a
+readWithUnit = do
+    n <- readPrec
+    p <- P.lift $ noPrefix <|> siPrefix <|> binaryPrefix
+    return $! n * p
+  where
+    noPrefix :: R.ReadP a
+    noPrefix = 1 <$ R.eof
+
+    siPrefix :: R.ReadP a
+    siPrefix
+        = 10^(1 :: Int) <$ R.string "da"
+        <|> 10^(2 :: Int) <$ R.char 'h'
+        <|> 10^(3 :: Int) <$ (R.char 'K' <|> R.char 'k')
+        <|> 10^(6 :: Int) <$ R.char 'M'
+        <|> 10^(9 :: Int) <$ R.char 'G'
+        <|> 10^(12 :: Int) <$ R.char 'T'
+        <|> 10^(15 :: Int) <$ R.char 'P'
+        <|> 10^(18 :: Int) <$ R.char 'E'
+        <|> 10^(21 :: Int) <$ R.char 'Z'
+        <|> 10^(24 :: Int) <$ R.char 'Y'
+
+    binaryPrefix :: R.ReadP a
+    binaryPrefix
+        = 1024^(1 :: Int) <$ (R.string "Ki" <|> R.string "ki")
+        <|> 1024^(2 :: Int) <$ R.string "Mi"
+        <|> 1024^(3 :: Int) <$ R.string "Gi"
+        <|> 1024^(4 :: Int) <$ R.string "Ti"
+        <|> 1024^(5 :: Int) <$ R.string "Pi"
+        <|> 1024^(6 :: Int) <$ R.string "Ei"
+        <|> 1024^(7 :: Int) <$ R.string "Zi"
+        <|> 1024^(8 :: Int) <$ R.string "Yi"
 
 -- -------------------------------------------------------------------------- --
 -- Miner
@@ -178,7 +249,7 @@ newtype ChainwebVersion = ChainwebVersion T.Text
     deriving newtype (Hashable, ToJSON, FromJSON)
 
 data Config = Config
-    { _configHashRate :: !HashRate
+    { _configHashRate :: !(UnitPrefixed HashRate)
     , _configNode :: !HostAddress
     , _configUseTls :: !Bool
     , _configInsecure :: !Bool
@@ -195,7 +266,7 @@ makeLenses ''Config
 
 defaultConfig :: Config
 defaultConfig = Config
-    { _configHashRate = defaultHashRate
+    { _configHashRate = UnitPrefixed defaultHashRate
     , _configNode = unsafeHostAddressFromText "localhost:1789"
     , _configUseTls = True
     , _configInsecure = True
@@ -281,6 +352,62 @@ parseConfig = id
         <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
 
 -- -------------------------------------------------------------------------- --
+-- HTTP Retry Logic
+
+-- | We don't limit retries. The maximum delay between retries is 5 seconds.
+--
+-- TODO: add configuration option for limitRetriesByCumulativeDelay
+--
+retryHttp :: Logger -> IO a -> IO a
+retryHttp logger = recovering policy (httpRetryHandler logger) . const
+  where
+    policy = capDelay 5000000 $ fullJitterBackoff 100
+
+httpRetryHandler :: Logger -> [RetryStatus -> Handler IO Bool]
+httpRetryHandler logger = skipAsyncExceptions <>
+    [ logRetries (return . httpRetries) f
+    , logRetries (\(_ :: SomeException) -> return True) logRetry
+    ]
+  where
+    logRetry True reason s = writeLog logger Warn
+        $ "Http request failed: " <> sshow reason
+        <> ". Retrying attempt " <> sshow (rsIterNumber s)
+    logRetry False reason s = writeLog logger Warn
+        $ "Http request finally failed after " <> sshow (rsIterNumber s)
+        <> " retries: " <> sshow reason
+
+    f True (HTTP.HttpExceptionRequest _req reason) s = logRetry True reason s
+    f False (HTTP.HttpExceptionRequest _req reason) s = logRetry False reason s
+    f _ e _ = throwM e
+
+
+-- | HTTP Exceptions for which a retry may result in subsequent succes.
+--
+-- This retries rather aggressively on any server or network related failure
+-- condition.
+--
+httpRetries :: HTTP.HttpException -> Bool
+httpRetries (HTTP.HttpExceptionRequest _req reason) = case reason of
+    HTTP.StatusCodeException resp _body
+        | HTTP.statusIsServerError (HTTP.responseStatus resp) -> True
+    HTTP.ResponseTimeout -> True
+    HTTP.ConnectionTimeout -> True
+    HTTP.ConnectionFailure _e -> True
+    HTTP.InvalidStatusLine _bs -> True
+    HTTP.InvalidHeader _bs -> True
+    HTTP.InternalException _e -> True
+    HTTP.ProxyConnectException _host _port status
+        | HTTP.statusIsServerError status -> True
+    HTTP.NoResponseDataReceived -> True
+    HTTP.ResponseBodyTooShort _expected _actual -> True
+    HTTP.InvalidChunkHeaders -> True
+    HTTP.IncompleteHeaders -> True
+    HTTP.HttpZlibException _e -> True
+    HTTP.ConnectionClosed -> True
+    _ -> False
+httpRetries (HTTP.InvalidUrlException _url _reason) = False
+
+-- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Types
 
 -- | ChainId
@@ -319,7 +446,6 @@ baseReq conf (ChainwebVersion v) pathSuffix = HTTP.defaultRequest
         , HTTP.port = fromIntegral $ _hostAddressPort node
         , HTTP.secure = _configUseTls conf
         , HTTP.method = "GET"
-        , HTTP.responseTimeout = HTTP.responseTimeoutNone
         , HTTP.checkResponse = HTTP.throwErrorStatusCodes
         }
   where
@@ -336,12 +462,14 @@ getInfo conf mgr = getJson mgr req
         , HTTP.port = fromIntegral $ _hostAddressPort node
         , HTTP.secure = _configUseTls conf
         , HTTP.method = "GET"
-        , HTTP.responseTimeout = HTTP.responseTimeoutNone
         , HTTP.checkResponse = HTTP.throwErrorStatusCodes
         }
     node = _configNode conf
 
 -- | Obtain chainweb version of the chainweb node
+--
+-- No retry here. This is use at startup and we want to fail fast if the node
+-- isn't available.
 --
 getNodeVersion :: Config -> HTTP.Manager -> IO ChainwebVersion
 getNodeVersion conf mgr = do
@@ -351,6 +479,8 @@ getNodeVersion conf mgr = do
         _ -> error "failed to parse chainweb version from node info"
 
 -- | Get new work from the chainweb node (for some available chain)
+--
+-- We don't retry here. If this fails, we loop around.
 --
 getJob :: Config -> ChainwebVersion -> HTTP.Manager -> IO (ChainId, Target, Work)
 getJob conf ver mgr = do
@@ -372,8 +502,11 @@ getJob conf ver mgr = do
 
 -- | Post solved work to the chainweb node
 --
+-- No timeout is used and in case of failure we retry aggressively. If the
+-- solvedwork becomes stale, the thread will be preempted and cancled.
+--
 postSolved :: Config -> ChainwebVersion -> Logger -> HTTP.Manager -> Work -> IO ()
-postSolved conf ver logger mgr (Work bytes) = do
+postSolved conf ver logger mgr (Work bytes) = retryHttp logger $ do
     logg Info "post solved worked"
     (void $ HTTP.httpLbs req mgr)
         `catch` \(e@(HTTP.HttpExceptionRequest _ _)) -> do
@@ -388,6 +521,9 @@ postSolved conf ver logger mgr (Work bytes) = do
 
 -- | Automatically restarts the stream when the response status is 2** and throws
 -- and exception otherwise.
+--
+-- No
+-- No retry is used. Retrying is handled by the outer logic.
 --
 updateStream
     :: Config
@@ -410,6 +546,7 @@ updateStream conf v logger mgr cid var =
 
     req = (baseReq conf v "mining/updates")
         { HTTP.requestBody = HTTP.RequestBodyBS $ runPutS $ encodeChainId cid
+        , HTTP.responseTimeout = HTTP.responseTimeoutNone
         }
 
 -- -------------------------------------------------------------------------- --
@@ -591,6 +728,10 @@ miningLoop conf ver logger mgr umap worker = go
         logg Info $ "got new work for chain " <> sshow cid
         withPreemption conf ver logger mgr umap cid (worker nonce target work) >>= \case
             Right solved -> do
+                -- TODO: we should do this asynchronously, however, preemption
+                -- should still apply. So, ideally, we would kick of a new
+                -- asynchronous loop interation while continuing this loop
+                -- iteration here.
                 postSolved conf ver logger mgr solved
                 logg Debug "submitted work"
             Left () ->
@@ -625,7 +766,13 @@ main = runWithPkgInfoConfiguration mainInfo pkgInfo $ \conf ->
 
 run :: Config -> Logger -> IO ()
 run conf logger = do
-    mgr <- HTTP.newManager $ HTTP.mkManagerSettings tlsSettings Nothing
+    mgr <- HTTP.newManager (HTTP.mkManagerSettings tlsSettings Nothing)
+        { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro 1000000 }
+            -- We don't want to wait too long, because latencies matter in
+            -- mining. NOTE, however, that for large blocks it can take a while
+            -- to get new work. This can be an issue with public mining mode.
+            -- For private mining that is done asynchronously. Public mining is
+            -- considered deprecated.
     ver <- getNodeVersion conf mgr
     rng <- MWC.createSystemRandom
     updateMap <- newUpdateMap
@@ -639,5 +786,5 @@ run conf logger = do
   where
     tlsSettings = HTTP.TLSSettingsSimple (_configInsecure conf) False False
 
-    workerRate = _configHashRate conf / fromIntegral (_configThreadCount conf)
+    workerRate = _getUnitPrefixed (_configHashRate conf) / fromIntegral (_configThreadCount conf)
 

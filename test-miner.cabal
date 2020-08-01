@@ -60,11 +60,13 @@ executable test-miner
         , hostaddress >=0.1
         , http-client >=0.7
         , http-client-tls >=0.3
+        , http-types >=0.12
         , lens >=4.19
         , loglevel >=0.1
         , memory >=0.15
         , mwc-random >=0.14
         , process >=1.6
+        , retry >=0.8
         , stm >=2.5
         , streaming >=0.2
         , streaming-events >=1.0
