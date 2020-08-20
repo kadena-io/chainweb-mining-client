@@ -346,7 +346,7 @@ parseConfig = id
         % short 'w'
         <> long "worker"
         <> help "The type of mining worker that is used"
-        <> metavar "cpu|simulation"
+        <> metavar "cpu|external|simulation"
     <*< configExternalWorkerCommand .:: option (textReader $ Right . T.unpack)
         % long "external-worker-cmd"
         <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
