@@ -13,9 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.8.3', '8.10.1']
+        ghc: ['8.8.4', '8.10.2']
         cabal: ['3.2.0.0']
-        os: ['ubuntu-18.04', 'macOS-10.14']
+        os: ['ubuntu-18.04', 'ubuntu-20.04', 'macOS-10.14']
         cabalcache: ['true']
     env:
       ARTIFACT_BUCKET: kadena-cabal-cache
