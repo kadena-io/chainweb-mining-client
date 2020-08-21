@@ -1,7 +1,7 @@
 cabal-version: 3.0
 name: test-miner
 version: 0.1
-synopsis: Test Miner
+synopsis: Mining Client for Kadena Chainweb
 homepage: https://github.com/kadena-io/test-miner
 bug-reports: https://github.com/kadena-io/test-miner/issues
 license: BSD-3-Clause
@@ -12,8 +12,8 @@ copyright: Copyright (c) 2019 - 2020, Kadena LLC
 category: Data, Mathematics
 build-type: Custom
 tested-with:
-      GHC==8.10.1
-    , GHC==8.8.3
+      GHC==8.10.2
+    , GHC==8.8.4
 extra-source-files:
     README.md
     CHANGELOG.md
