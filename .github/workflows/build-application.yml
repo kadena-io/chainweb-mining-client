@@ -20,7 +20,7 @@ jobs:
         cabalcache: ['true']
     env:
       ARTIFACT_BUCKET: kadena-cabal-cache
-      ARTIFACT_FOLDER: test-miner
+      ARTIFACT_FOLDER: chainweb-mining-client
 
     steps:
 
@@ -70,41 +70,41 @@ jobs:
     - name: Install build dependencies
       run: cabal v2-build --only-dependencies
     - name: Build
-      run: cabal v2-build test-miner
+      run: cabal v2-build chainweb-mining-client
 
     # Publish Artifacts
     - name: Prepare artifacts
       run: |
         mkdir -p artifacts/applications
-        export VER=$(grep '^version' test-miner.cabal | sed -e 's/.*: *//')
-        cp $(find dist-newstyle/ -name 'test-miner' -type f) artifacts/applications
+        export VER=$(grep '^version' chainweb-mining-client.cabal | sed -e 's/.*: *//')
+        cp $(find dist-newstyle/ -name 'chainweb-mining-client' -type f) artifacts/applications
         cp README.md artifacts/applications
         cp CHANGELOG.md artifacts/applications
         cp LICENSE artifacts/applications
-        cp test-miner.cabal artifacts/applications
+        cp chainweb-mining-client.cabal artifacts/applications
         cp cabal.project artifacts/applications
         cp cabal.project.freeze artifacts/applications
     - name: Strip Binary
-      run: strip artifacts/applications/test-miner
+      run: strip artifacts/applications/chainweb-mining-client
     - name: Safe artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: test-miner.${{ matrix.ghc }}.${{ matrix.os }}
+        name: chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}
         path: artifacts/applications
 
     # Publish to S3
     - name: Define S3 locations
       if: always()
       run: |
-        echo "::set-env name=BINFILE::test-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz"
-        echo "::set-env name=BRANCH_BINFILE::test-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz"
-        echo "::set-env name=TAG_BINFILE::test-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz"
+        echo "::set-env name=BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz"
+        echo "::set-env name=BRANCH_BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz"
+        echo "::set-env name=TAG_BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz"
 
     # Publish artifacts to S3
     - name: Publish to S3
       run: |
         aws --version
-        tar -C ./artifacts/applications/ -czf $BINFILE test-miner
+        tar -C ./artifacts/applications/ -czf $BINFILE chainweb-mining-client
         echo "aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
         aws --debug s3 cp "$BINFILE" "s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
         echo "aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$BINFILE --acl public-read"
