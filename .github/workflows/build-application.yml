@@ -103,8 +103,10 @@ jobs:
     - name: Publish to S3
       run: |
         tar -C ./artifacts/applications/ -czf $BINFILE test-miner
-        aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/
-        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$BINFILE --acl public-read
+        echo "aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
+        aws s3 cp "$BINFILE" "s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
+        echo "aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$BINFILE --acl public-read"
+        aws s3api put-object-acl --bucket "$ARTIFACT_BUCKET" --key="$ARTIFACT_FOLDER/$BINFILE" --acl public-read
     - name: Publish to S3 for master builds
       if: env.GIT_REF_SHORT == 'master'
       run: |
