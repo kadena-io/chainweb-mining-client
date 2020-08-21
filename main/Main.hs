@@ -21,8 +21,6 @@
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
 -- Stability: experimental
 --
--- A fake Chainweb POW miner for testing and simulations.
---
 module Main
 ( main
 ) where
@@ -751,7 +749,7 @@ genKeys = do
 -- Main
 
 mainInfo :: ProgramInfo Config
-mainInfo = programInfo "Chainweb Test Miner for simulating POW" parseConfig defaultConfig
+mainInfo = programInfo "Kadena Chainweb Mining Client" parseConfig defaultConfig
 
 -- | TODO: validate the configuration:
 --
