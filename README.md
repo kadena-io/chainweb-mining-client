@@ -11,6 +11,14 @@ hardware, which usually comes with its own mining client and mining pool
 support implementations. This generic mining client is intended mostly for
 testing.*
 
+*   [Installation](#installation)
+*   [Usage](#usage)
+*   [Usage Examples](#usage-examples)
+    *  [Generating a New Key Pair](#generating-a-new-key-pair)
+    *  [CPU Mining](#cpu-mining)
+    *  [GPU Mining](#gpu-mining)
+    *  [Creating a Configuration File](#creating-a-configuration-file)
+
 ## Installation
 
 Prebuild binaries for the latest version are available from the [GitHub Release Site](https://github.com/kadena-io/chainweb-mining-client/releases/latest).
