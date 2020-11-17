@@ -26,15 +26,15 @@ jobs:
 
     # Setup
     - name: Checkout repository
-      uses: actions/checkout@v2.2.0
+      uses: actions/checkout@v2
     - name: Create env variables for git objects
       run: |
-        echo "::set-env name=IS_RELEASE::${{ contains(github.event_name, 'release') }}"
-        echo "::set-env name=GIT_REF_SHORT::${GITHUB_REF#refs/heads/}"
-        echo "::set-env name=GIT_HEAD_REF_SHORT::${GITHUB_HEAD_REF#refs/heads/}"
-        echo "::set-env name=GIT_SHA_SHORT::$(git rev-parse --short HEAD || true)"
+        echo "IS_RELEASE='${{ contains(github.event_name, 'release') }}'" >> $GITHUB_ENV
+        echo "GIT_REF_SHORT='${GITHUB_REF#refs/heads/}'" >> $GITHUB_ENV
+        echo "GIT_HEAD_REF_SHORT='${GITHUB_HEAD_REF#refs/heads/}'" >> $GITHUB_ENV
+        echo "GIT_SHA_SHORT='$(git rev-parse --short HEAD || true)'" >> $GITHUB_ENV
     - name: Install GHC and Cabal
-      uses: actions/setup-haskell@v1.1.2
+      uses: actions/setup-haskell@v1
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
@@ -42,7 +42,7 @@ jobs:
       run: |
         ghc --version
         cabal --version
-    - uses: actions/cache@v1
+    - uses: actions/cache@v2
       name: Cache dist-newstyle
       with:
         path: dist-newstyle
@@ -60,7 +60,7 @@ jobs:
         cabal v2-freeze
     - name: Sync from cabal cache
       if: matrix.cabalcache == 'true'
-      uses: larskuhtz/cabal-cache-action@21220b9f6499bb12cb0b4b926d6faa9c46a7b146
+      uses: larskuhtz/cabal-cache-action@ecc751af6d31b3ed5a3b4aefdefd0ed6ef4cb414
       with:
         bucket: "kadena-cabal-cache"
         region: "us-east-1"
@@ -96,9 +96,9 @@ jobs:
     - name: Define S3 locations
       if: always()
       run: |
-        echo "::set-env name=BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz"
-        echo "::set-env name=BRANCH_BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz"
-        echo "::set-env name=TAG_BINFILE::chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz"
+        echo "BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz'" >> $GITHUB_ENV
+        echo "BRANCH_BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz'" >> $GITHUB_ENV
+        echo "TAG_BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz'" >> $GITHUB_ENV
 
     # Publish artifacts to S3
     - name: Publish to S3
