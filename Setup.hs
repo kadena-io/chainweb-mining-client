@@ -1,4 +1,6 @@
 module Main (main) where
 
-import Configuration.Utils.Setup
+import qualified Configuration.Utils.Setup
 
+main :: IO ()
+main = Configuration.Utils.Setup.main

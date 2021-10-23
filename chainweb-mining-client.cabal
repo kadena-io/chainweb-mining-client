@@ -58,7 +58,7 @@ executable chainweb-mining-client
         -threaded
         -with-rtsopts=-N
     build-depends:
-          base >=4.10 && <4.15
+          base >=4.10 && <5
         , aeson >=1.5
         , async >=2.2
         , bytes >=0.17
