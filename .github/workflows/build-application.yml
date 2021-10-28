@@ -83,7 +83,7 @@ jobs:
   # ########################################################################## #
   docker-image:
     name: Build and publish docker image
-    needs: [config, build]
+    needs: [build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
