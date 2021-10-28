@@ -96,7 +96,7 @@ externalWorker logger cmd _nonce target (Work work) =
                 code <- P.waitForProcess ph
                 (outbytes, _) <- (,) <$> wait stdoutThread <*> wait stderrThread
                 writeLog logger Info "received nonce for solved work from external worker"
-                if (code /= ExitSuccess)
+                if code /= ExitSuccess
                   then
                     throwM $ ExternalWorkerException $
                         "External worker failed with code: " <> (T.pack . show) code
@@ -118,7 +118,7 @@ externalWorker logger cmd _nonce target (Work work) =
                             | otherwise -> return $ Work $!
                                 BS.toShort $ B.take 278 (BS.fromShort work) <> B.reverse bs
 
-    go _ _ _ _ _ = throwM $ ExternalWorkerException $
+    go _ _ _ _ _ = throwM $ ExternalWorkerException
         "impossible: process is opened with CreatePipe in/out/err"
 
     errThread l hstderr = next

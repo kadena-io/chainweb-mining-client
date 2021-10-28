@@ -81,5 +81,5 @@ simulationWorker logger rng rate _nonce (Target targetBytes) work = do
 
     -- Target is an little endian encoded (unsigned) 256 bit word.
     targetNum :: Rational
-    targetNum = foldr (\b a -> fromIntegral b + 256 * a) 0 $ BS.unpack $ targetBytes
+    targetNum = foldr (\b a -> fromIntegral b + 256 * a) 0 $ BS.unpack targetBytes
 

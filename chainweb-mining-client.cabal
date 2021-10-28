@@ -47,9 +47,12 @@ executable chainweb-mining-client
         PkgInfo
         Logger
         Worker
+        WorkerUtils
         Worker.CPU
         Worker.External
         Worker.Simulation
+        Worker.Stratum
+        Utils
     autogen-modules:
         PkgInfo
     default-language: Haskell2010
@@ -58,7 +61,9 @@ executable chainweb-mining-client
         -threaded
         -with-rtsopts=-N
     build-depends:
-          base >=4.10 && <5
+          attoparsec >=0.14
+        , base >=4.10 && <5
+        , base16-bytestring >=1.0
         , aeson >=1.5
         , async >=2.2
         , bytes >=0.17
@@ -81,8 +86,10 @@ executable chainweb-mining-client
         , retry >=0.8
         , stm >=2.5
         , streaming >=0.2
+        , streaming-commons >=0.2.2
         , streaming-events >=1.0
         , text >=1.2
         , time >=1.9
         , unordered-containers >=0.2
         , wai-extra >=3.0
+        , vector >= 0.12

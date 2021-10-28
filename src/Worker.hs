@@ -21,6 +21,7 @@ module Worker
 , encodeTarget
 , decodeTarget
 , targetToText16
+, targetToText16Be
 
 -- * Mining Work
 , Work(..)
@@ -34,9 +35,10 @@ module Worker
 , Worker
 ) where
 
-import qualified Data.ByteArray.Encoding as BA
 import Data.Bytes.Get
 import Data.Bytes.Put
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
 import qualified Data.Text as T
@@ -44,6 +46,10 @@ import qualified Data.Text.Encoding as T
 import Data.Word
 
 import GHC.Generics
+
+-- internal modules
+
+import Utils
 
 -- -------------------------------------------------------------------------- --
 -- Hash Target
@@ -67,8 +73,14 @@ encodeTarget (Target b) = putByteString $ BS.fromShort b
 -- | Represent target bytes in hexadecimal base
 --
 targetToText16 :: Target -> T.Text
-targetToText16 = T.decodeUtf8 . BA.convertToBase BA.Base16 . BS.fromShort . _targetBytes
+targetToText16 = shortByteStringToHex . _targetBytes
 {-# INLINE targetToText16 #-}
+
+-- | Represent target bytes in hexadecimal base in big endian encoding (used by Stratum)
+--
+targetToText16Be :: Target -> T.Text
+targetToText16Be = T.decodeUtf8 . B16.encode . B.reverse . BS.fromShort . _targetBytes
+{-# INLINE targetToText16Be #-}
 
 -- -------------------------------------------------------------------------- --
 -- Work
