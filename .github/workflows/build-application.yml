@@ -78,6 +78,10 @@ jobs:
         tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
     - name: Safe artifacts
       uses: actions/upload-artifact@v2
+      env:
+        ARTIFACTS_DIR: ./artifacts/chainweb-mining-client
+        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: ${{ env.ARTIFACTS_ARCHIVE }}
@@ -107,6 +111,9 @@ jobs:
 
     - name: Get build artifacts
       uses: actions/download-artifact@v2
+      env:
+        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: .
