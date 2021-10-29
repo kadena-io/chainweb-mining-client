@@ -2,39 +2,37 @@ name: Build and publish application binaries
 
 on: [push]
 
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.kadena_cabal_cache_aws_access_key_id }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.kadena_cabal_cache_aws_secret_access_key }}
-  AWS_DEFAULT_REGION: us-east-1
-
 jobs:
+  
+
+  # ########################################################################## #
   build:
     name: Build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.8.4', '8.10.2']
-        cabal: ['3.2.0.0']
-        os: ['ubuntu-18.04', 'ubuntu-20.04', 'macOS-10.14']
-        cabalcache: ['true']
-    env:
-      ARTIFACT_BUCKET: kadena-cabal-cache
-      ARTIFACT_FOLDER: chainweb-mining-client
+        ghc: ['8.8.4', '8.10.7', '9.0.1']
+        cabal: ['3.4.0.0']
+        os: ['ubuntu-18.04', 'ubuntu-20.04', 'macOS-latest']
 
     steps:
+    - name: Set Variables
+      id: vars
+      shell: bash
+      run: |
+        cat >> $GITHUB_ENV <<EOF
+        SHORT_SHA=${GITHUB_SHA::7}
+        ARTIFACTS_DIR=./artifacts/chainweb-mining-client
+        ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${GITHUB_SHA::7}.tar.gz
+        EOF
 
     # Setup
     - name: Checkout repository
       uses: actions/checkout@v2
-    - name: Create env variables for git objects
-      run: |
-        echo "IS_RELEASE='${{ contains(github.event_name, 'release') }}'" >> $GITHUB_ENV
-        echo "GIT_REF_SHORT='${GITHUB_REF#refs/heads/}'" >> $GITHUB_ENV
-        echo "GIT_HEAD_REF_SHORT='${GITHUB_HEAD_REF#refs/heads/}'" >> $GITHUB_ENV
-        echo "GIT_SHA_SHORT='$(git rev-parse --short HEAD || true)'" >> $GITHUB_ENV
     - name: Install GHC and Cabal
-      uses: actions/setup-haskell@v1
+      uses: larskuhtz/actions/setup@e0f107055073590682bc5264b8da5c2b6af39a65
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
@@ -42,81 +40,134 @@ jobs:
       run: |
         ghc --version
         cabal --version
-    - uses: actions/cache@v2
+    - uses: pat-s/always-upload-cache@v2.1.5
       name: Cache dist-newstyle
       with:
-        path: dist-newstyle
-        key: ${{ matrix.os }}-${{ matrix.ghc }}-dist-newstyle-${{ github.sha }}
-        restore-keys: |
-          ${{ matrix.os }}-${{ matrix.ghc }}-dist-newstyle-
-          ${{ matrix.os }}-${{ matrix.ghc }}-dist-newstyle
+        path: |
+          ~/.cabal/packages
+          ~/.cabal/store
+          dist-newstyle
+        key: ${{ matrix.os }}-${{ matrix.ghc }}-0-cabal
 
     # Build
     - name: Update package database
-      run: cabal v2-update
+      run: cabal update
     - name: Configure build
       run: |
-        cabal v2-build all --dry-run
-        cabal v2-freeze
-    - name: Sync from cabal cache
-      if: matrix.cabalcache == 'true'
-      uses: larskuhtz/cabal-cache-action@ecc751af6d31b3ed5a3b4aefdefd0ed6ef4cb414
-      with:
-        bucket: "kadena-cabal-cache"
-        region: "us-east-1"
-        folder: "${{ matrix.os }}"
-        aws_access_key_id: "${{ secrets.kadena_cabal_cache_aws_access_key_id }}"
-        aws_secret_access_key: "${{ secrets.kadena_cabal_cache_aws_secret_access_key }}"
+        cabal build all --dry-run
+        cabal freeze
     - name: Install build dependencies
-      run: cabal v2-build --only-dependencies
+      run: cabal build --only-dependencies
     - name: Build
-      run: cabal v2-build chainweb-mining-client
+      run: cabal build
 
-    # Publish Artifacts
+    # Tests
+    - name: Run Tests
+      run: cabal test
+
+    # Artifacts
     - name: Prepare artifacts
       run: |
-        mkdir -p artifacts/applications
-        export VER=$(grep '^version' chainweb-mining-client.cabal | sed -e 's/.*: *//')
-        cp $(find dist-newstyle/ -name 'chainweb-mining-client' -type f) artifacts/applications
-        cp README.md artifacts/applications
-        cp CHANGELOG.md artifacts/applications
-        cp LICENSE artifacts/applications
-        cp chainweb-mining-client.cabal artifacts/applications
-        cp cabal.project artifacts/applications
-        cp cabal.project.freeze artifacts/applications
-    - name: Strip Binary
-      run: strip artifacts/applications/chainweb-mining-client
+        echo "ARTIFACTS_ARCHIVE: $ARTIFACTS_ARCHIVE"
+        mkdir -p $ARTIFACTS_DIR
+        cp $(cabal list-bin chainweb-mining-client) $ARTIFACTS_DIR
+        cp README.md $ARTIFACTS_DIR
+        cp CHANGELOG.md $ARTIFACTS_DIR
+        cp LICENSE $ARTIFACTS_DIR
+        cp chainweb-mining-client.cabal $ARTIFACTS_DIR
+        cp cabal.project $ARTIFACTS_DIR
+        cp cabal.project.freeze $ARTIFACTS_DIR
+        tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
     - name: Safe artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}
-        path: artifacts/applications
+        name: ${{ env.ARTIFACTS_NAME }}
+        path: ${{ env.ARTIFACTS_ARCHIVE }}
+        if-no-files-found: error
 
-    # Publish to S3
-    - name: Define S3 locations
-      if: always()
-      run: |
-        echo "BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz'" >> $GITHUB_ENV
-        echo "BRANCH_BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz'" >> $GITHUB_ENV
-        echo "TAG_BINFILE='chainweb-mining-client.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz'" >> $GITHUB_ENV
+  # ########################################################################## #
+  docker-image:
+    name: Build and publish docker image
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["8.10.7"]
+        os: ["ubuntu-20.04"]
+    env:
+      GHC_VERSION: ${{ matrix.ghc }}
+      OS: ${{ matrix.os }}
+      COMPILER: ghc-${{ matrix.ghc }}
 
-    # Publish artifacts to S3
-    - name: Publish to S3
+    steps:
+    - name: Set Variables
+      id: vars
+      shell: bash
       run: |
-        aws --version
-        tar -C ./artifacts/applications/ -czf $BINFILE chainweb-mining-client
-        echo "aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
-        aws --debug s3 cp "$BINFILE" "s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/"
-        echo "aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$BINFILE --acl public-read"
-        aws s3api put-object-acl --bucket "$ARTIFACT_BUCKET" --key="$ARTIFACT_FOLDER/$BINFILE" --acl public-read
-    - name: Publish to S3 for master builds
-      if: env.GIT_REF_SHORT == 'master'
+        cat >> $GITHUB_ENV <<EOF
+        SHORT_SHA=${GITHUB_SHA::7}
+        ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${GITHUB_SHA::7}.tar.gz
+        EOF
+
+    - name: Get build artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: ${{ env.ARTIFACTS_NAME }}
+        path: .
+
+    - name: Extract artifacts
       run: |
-        aws s3 cp s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/$BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/$BRANCH_BINFILE
-        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$BRANCH_BINFILE --acl public-read
-    - name: Publish to S3 for release tag builds
-      if: contains(github.event_name, 'release') || startsWith(env.GIT_TAG, '1.')
+        tar -xzf "$ARTIFACTS_ARCHIVE"
+
+    - name: Create Dockerfile
       run: |
-        aws s3 cp s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/$BINFILE s3://$ARTIFACT_BUCKET/$ARTIFACT_FOLDER/$TAG_BINFILE
-        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$ARTIFACT_FOLDER/$TAG_BINFILE --acl public-read
+        cat > Dockerfile <<EOF
+        FROM ubuntu:${OS#ubuntu-}
+        RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+        WORKDIR /chainweb-mining-client
+        COPY chainweb-mining-client/chainweb-mining-client .
+        COPY chainweb-mining-client/LICENSE .
+        COPY chainweb-mining-client/README.md .
+        COPY chainweb-mining-client/CHANGELOG.md .
+        COPY chainweb-mining-client/chainweb-mining-client.cabal .
+        COPY chainweb-mining-client/cabal.project .
+        COPY chainweb-mining-client/cabal.project.freeze .
+        ENTRYPOINT /chainweb-mining-client
+        EOF
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v1
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v3
+      with:
+        images: ghcr.io/kadena-io/internal/chainweb-mining-client
+        tags: |
+          type=sha
+          type=ref,event=branch
+          type=ref,event=tag
+          type=ref,event=pr
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push
+      id: docker_build
+      uses: docker/build-push-action@v2
+      with:
+        push: true
+        context: .
+        file: ./Dockerfile
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
 
