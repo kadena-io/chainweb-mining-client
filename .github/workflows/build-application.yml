@@ -72,7 +72,7 @@ jobs:
         cp README.md $ARTIFACTS_DIR
         cp CHANGELOG.md $ARTIFACTS_DIR
         cp LICENSE $ARTIFACTS_DIR
-        cp chainweb.cabal $ARTIFACTS_DIR
+        cp chainweb-mining-client.cabal $ARTIFACTS_DIR
         cp cabal.project $ARTIFACTS_DIR
         cp cabal.project.freeze $ARTIFACTS_DIR
         tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
@@ -128,7 +128,7 @@ jobs:
         COPY chainweb-mining-client/LICENSE .
         COPY chainweb-mining-client/README.md .
         COPY chainweb-mining-client/CHANGELOG.md .
-        COPY chainweb-mining-client/chainweb.cabal .
+        COPY chainweb-mining-client/chainweb-mining-client.cabal .
         COPY chainweb-mining-client/cabal.project .
         COPY chainweb-mining-client/cabal.project.freeze .
         ENTRYPOINT /chainweb-mining-client
