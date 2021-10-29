@@ -46,7 +46,6 @@ module Worker.Stratum
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Lens
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
@@ -72,6 +71,7 @@ import Numeric.Natural
 import qualified Streaming.Prelude as S
 
 import System.IO.Unsafe
+import qualified System.LogLevel as L
 
 -- internal modules
 
@@ -246,7 +246,7 @@ newtype Nonce2 = Nonce2 BS.ShortByteString
 --
 composeNonce :: Nonce1 -> Nonce2 -> Nonce
 composeNonce (Nonce1 n1) (Nonce2 n2) = Nonce $! unsafePerformIO $
-    BS.useAsCStringLen (n2 <> n1) $ \(ptr, l) -> peek @Word64 (castPtr ptr)
+    BS.useAsCStringLen (n2 <> n1) $ \(ptr, _) -> peek @Word64 (castPtr ptr)
         -- FIXME make sure this is LE
 
 {-# INLINE composeNonce #-}
@@ -477,8 +477,6 @@ data MiningResponse
     | SubmitResponse MsgId (Either Error Bool)
 
 deriving instance Show MiningResponse
--- deriving instance Eq MiningResponse
--- deriving instance Ord MiningResponse
 
 subscribeResponse :: MsgId -> Nonce1 -> Nonce2Size -> MiningResponse
 subscribeResponse mid n1 n2s = SubscribeResponse mid $ Right (Static, n1, n2s)
@@ -580,7 +578,7 @@ data StratumServerCtx = StratumServerCtx
 
 newStratumServerCtx :: IO StratumServerCtx
 newStratumServerCtx = StratumServerCtx
-    (\u p -> return (Right ()))
+    (\_ _ -> return (Right ()))
     <$> newMVar mempty
     <*> newTVarIO noopJob
     <*> newIORef 0
@@ -594,15 +592,19 @@ newStratumServerCtx = StratumServerCtx
 -- enough active work items available.
 --
 submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
-submitWork ctx logger _nonce target work = mask $ \umask -> do
-    job <- umask $ newJob ctx target work
-    flip finally (removeJob ctx (_jobId job)) $ umask $ do
-        nonce <- takeMVar (_jobResult job)
-        injectNonce nonce (_jobWork job)
-        -- TODO should we check the result here?
+submitWork ctx l _nonce target work =  withLogTag l "Stratum Worker" $ \logger -> do
+    mask $ \umask -> do
+        job <- umask $ newJob logger ctx target work
+        flip onException (writeLog logger L.Info ("discarded unfinished job"  <> sshow (_jobId job))) $
+            flip finally (removeJob ctx (_jobId job)) $ umask $ do
+                nonce <- takeMVar (_jobResult job)
+                !w <- injectNonce nonce (_jobWork job)
+                writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
+                return w
+                -- TODO should we check the result here?
 
-newJob :: StratumServerCtx -> Target -> Work -> IO Job
-newJob ctx target work = do
+newJob :: Logger -> StratumServerCtx -> Target -> Work -> IO Job
+newJob logger ctx target work = do
 
     -- Create new job
     jid <- JobId <$> atomicModifyIORef' (_ctxCurrentId ctx) (\x -> (x + 1, x))
@@ -616,6 +618,7 @@ newJob ctx target work = do
         -- notify all active connections
         atomically $ writeTVar (_ctxCurrentJob ctx) job
 
+        writeLog logger L.Info $ "created new job " <> T.pack (show (_jobId job))
         return job
 
 removeJob :: StratumServerCtx -> JobId -> IO ()
@@ -631,8 +634,6 @@ data SessionState = SessionState
     , _subscribed :: !(TMVar Agent)
     }
 
-makeLenses ''SessionState
-
 data AppResult
     = JsonRpcError T.Text
     | StratumError T.Text
@@ -647,12 +648,31 @@ type RequestStream = S.Stream (S.Of MiningRequest) IO AppResult
 writeTMVar :: TMVar a -> a -> STM ()
 writeTMVar var a = tryTakeTMVar var >> putTMVar var a
 
-session :: StratumServerCtx -> AppData -> IO ()
-session ctx app = flip finally (appCloseConnection app) $ do
-    sessionCtx <- initState
-    race_ (processRequests sessionCtx) $ do
-        awaitSubscribe sessionCtx
-        S.mapM_ (notify app) jobStream
+session :: Logger -> StratumServerCtx -> AppData -> IO ()
+session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow (appSockAddr app)) $ \logger ->
+    flip finally (appCloseConnection app) $ do
+        sessionCtx <- initState
+        r <- race (processRequests sessionCtx) $ do
+            awaitSubscribe sessionCtx
+            S.mapM_ (notify app) jobStream
+        case r of
+            Right _ -> writeLog logger L.Error "Stratum session ended unexpectedly because an internal chainweb-mining-client issue"
+            Left e@(JsonRpcError msg) -> do
+                replyError app $ Error (-32700, "Parse Error", A.String msg)
+                writeLog logger L.Warn $ "session termianted with " <> sshow e
+            Left e@(StratumError msg) -> do
+                replyError app $ Error (-32600, "Invalid Request", A.String msg)
+                    -- FIXME be more specific (cf. json rpc internal error codes)
+                writeLog logger L.Warn $ "session termianted with " <> sshow e
+            Left e@(TimeoutError msg) -> do
+                replyError app $ Error (-1, "Request Timeout", A.String msg)
+                    -- TODO not yet implemented
+                writeLog logger L.Warn $ "session termianted with " <> sshow e
+            Left e@(ConnectionClosed msg) -> do
+                replyError app $ Error (-2, "Connection Error", A.String msg)
+                    -- TODO: is the connection actually closed if we receive this?
+                    -- TODO: if the connection got closed we can't reply
+                writeLog logger L.Warn $ "session termianted with " <> sshow e
 
   where
 
@@ -678,10 +698,8 @@ session ctx app = flip finally (appCloseConnection app) $ do
     -- For now we let the ASIC start at 0
     initState = SessionState (Nonce1 "") <$> newEmptyTMVarIO <*> newEmptyTMVarIO
 
-    processRequests :: SessionState -> IO ()
-    processRequests sessionCtx = do
-        r <- S.mapM_ (handleRequest sessionCtx) (messages app)
-        handleEos r
+    processRequests :: SessionState -> IO AppResult
+    processRequests sessionCtx = S.mapM_ (handleRequest sessionCtx) (messages app)
 
     handleRequest :: SessionState -> MiningRequest -> IO ()
     handleRequest sessionCtx = \case
@@ -695,36 +713,17 @@ session ctx app = flip finally (appCloseConnection app) $ do
             reply app $ subscribeResponse mid (_sessionNonce1 sessionCtx) (Nonce2Size 8)
             atomically $ writeTMVar (_subscribed sessionCtx) agent
 
-        (Submit mid (u, w, j, n2)) -> do
+        (Submit mid (_u, _w, j, n2)) -> do
 
             -- Commit new to job
             modifyMVar (_ctxJobs ctx) $ \m -> case HM.lookup j m of
                 Nothing -> return (m, ())
                 Just job -> do
                     let n = composeNonce (_sessionNonce1 sessionCtx) n2
-                    tryPutMVar (_jobResult job) n
+                    void $ tryPutMVar (_jobResult job) n
                     return (m, ())
 
             reply app $ SubmitResponse mid (Right True) -- FIXME do a check?
-
-    handleEos :: AppResult -> IO ()
-    handleEos = \case
-        e@(JsonRpcError msg) -> do
-            replyError app $ Error (-32700, "Parse Error", A.String msg)
-            throwM e
-        e@(StratumError msg) -> do
-            replyError app $ Error (-32600, "Invalid Request", A.String msg)
-                -- FIXME be more specific (cf. json rpc internal error codes)
-            throwM e
-        e@(TimeoutError msg) -> do
-            replyError app $ Error (-1, "Request Timeout", A.String msg)
-                -- TODO not yet implemented
-            throwM e
-        e@(ConnectionClosed msg) -> do
-            replyError app $ Error (-2, "Connection Error", A.String msg)
-                -- TODO: is the connection actually closed if we receive this?
-                -- TODO: if the connection got closed we can't reply
-            throwM e
 
 send :: A.ToJSON a => AppData -> a -> IO ()
 send app a = appWrite app (BL.toStrict $ A.encode a) >> appWrite app "\n"
@@ -736,7 +735,12 @@ reply :: AppData -> MiningResponse -> IO ()
 reply = send
 
 notify :: AppData -> Job -> IO ()
-notify app job = send app $ Notify (_jobId job, WorkHeader (_jobWork job), True) -- for now we always replace previous wor
+notify app job = do
+    -- FIXME set target only if needed. Find out whether changing target slows down the ASICs
+    -- If it is expensive we'll have to implement mining of shares.
+    --
+    send app $ SetTarget (StratumTarget $ _jobTarget job)
+    send app $ Notify (_jobId job, WorkHeader (_jobWork job), True) -- for now we always replace previous wor
 
 
 -- | TODO: we probably need some protection against clients keeping
@@ -752,9 +756,9 @@ messages app = go mempty
   where
     go :: B.ByteString -> S.Stream (S.Of MiningRequest) IO AppResult
     go i = P.parseWith (liftIO (appRead app)) A.json' i >>= \case
-        P.Fail i' path err ->
-            return $ JsonRpcError $ "Failed to parse JSON RPC message: " <> T.pack err
-        P.Partial cont ->
+        P.Fail _ path err ->
+            return $ JsonRpcError $ "Failed to parse JSON RPC message: " <> T.pack err <> " " <> T.pack (show path)
+        P.Partial _cont ->
             -- Can this actually happen, or would it a P.Fail?
             return $ ConnectionClosed "Connection closed unexpectedly"
         P.Done i' val -> case A.fromJSON val of
@@ -767,16 +771,16 @@ messages app = go mempty
 -- -------------------------------------------------------------------------- --
 -- Stratum Server
 
-withStratumServer :: (StratumServerCtx -> IO b) -> IO b
-withStratumServer inner = do
+withStratumServer :: Logger -> (StratumServerCtx -> IO ()) -> IO ()
+withStratumServer l inner = withLogTag l "Stratum Server" $ \logger -> do
     ctx <- newStratumServerCtx
-    race (server ctx) (inner ctx) >>= \case
-        Left e -> error $ "stratum server exited unexpectedly"
-        Right a -> return a
+    race (server logger ctx) (inner ctx) >>= \case
+        Left _ -> writeLog logger L.Error "server exited unexpectedly"
+        Right _ -> return ()
   where
-    server ctx = flip finally (print "server stopped") $ do
-        print "start server"
-        runTCPServer (serverSettingsTCP port host) (session ctx)
+    server logger ctx = flip finally (writeLog logger L.Info "server stopped") $ do
+        writeLog logger L.Info "Start stratum server"
+        runTCPServer (serverSettingsTCP port host) (session logger ctx)
 
 -- -------------------------------------------------------------------------- --
 -- Example sessions

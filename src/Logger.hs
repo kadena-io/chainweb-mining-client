@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 -- |
 -- Module: Logger
@@ -51,13 +52,14 @@ decrementCounter :: IORef Int -> IO ()
 decrementCounter ref = atomicModifyIORef' ref $ \x -> (x - 1, ())
 
 resetCounter :: IORef Int -> IO Int
-resetCounter ref = atomicModifyIORef' ref $ \x -> (0, x)
+resetCounter ref = atomicModifyIORef' ref (0,)
 
 -- -------------------------------------------------------------------------- --
 -- Terminal Colors
 
 useColor :: Bool
 useColor = unsafePerformIO $ hIsTerminalDevice stdout
+{-# NOINLINE useColor #-}
 
 data Color = Black | Red  | Green | Yellow | Blue | Magenta | Cyan | White
 
@@ -163,7 +165,7 @@ writeLog !logger !level !msg
         -- Nothing in here is expected to block or throw. So the mask should be
         -- sufficient. (TODO what about the getSystemTime?)
         c <- readIORef (_loggerApproxQueueSize logger)
-        if (c > _loggerMaxQueueSize logger)
+        if c > _loggerMaxQueueSize logger
           then incrementCounter (_loggerSkipped logger)
           else do
             skipped <- resetCounter (_loggerSkipped logger)

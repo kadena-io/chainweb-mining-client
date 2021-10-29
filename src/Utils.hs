@@ -29,6 +29,7 @@ module Utils
 
 -- * Misc
 , int
+, sshow
 ) where
 
 import Data.Aeson
@@ -37,6 +38,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as BS
+import Data.String
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy.Builder as TB
@@ -126,4 +128,9 @@ reversedShortByteStringFromHex = fmap (BS.toShort . B.reverse) . B16.decode . T.
 
 int :: Integral a => Num b => a -> b
 int = fromIntegral
+{-# INLINE int #-}
+
+sshow :: Show a => IsString s => a -> s
+sshow = fromString . show
+{-# INLINE sshow #-}
 

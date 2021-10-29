@@ -792,5 +792,5 @@ run conf logger = do
             f $ \l -> simulationWorker l rng workerRate
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256
-        StratumWorker -> Stratum.withStratumServer $ \ctx -> f (Stratum.submitWork ctx)
+        StratumWorker -> Stratum.withStratumServer logger $ \ctx -> f (Stratum.submitWork ctx)
 
