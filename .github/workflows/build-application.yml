@@ -21,7 +21,7 @@ jobs:
       id: vars
       shell: bash
       run: |
-        cat >> GITHUB_ENV <<EOF
+        cat >> $GITHUB_ENV <<EOF
         SHORT_SHA=${GITHUB_SHA::7}
         ARTIFACTS_DIR=./artifacts/chainweb-mining-client
         ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
@@ -105,7 +105,7 @@ jobs:
       id: vars
       shell: bash
       run: |
-        cat >> GITHUB_ENV <<EOF
+        cat >> $GITHUB_ENV <<EOF
         SHORT_SHA=${GITHUB_SHA::7}
         ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
         ARTIFACTS_ARCHIVE=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${GITHUB_SHA::7}.tar.gz
