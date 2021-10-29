@@ -64,7 +64,7 @@ jobs:
       env:
         ARTIFACTS_DIR: ./artifacts/chainweb-mining-client
         ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: ${{ env.ARTIFACTS_NAME }}.${{ steps.vars.outputs.short-sha }}.tar.gz
+        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       run: |
         echo "ARTIFACTS_ARCHIVE: $ARTIFACTS_ARCHIVE"
         mkdir -p $ARTIFACT_DIR
@@ -114,7 +114,7 @@ jobs:
     - name: Extract artifacts
       env:
         ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: ${{ env.ARTIFACTS_NAME }}.${{ steps.vars.outputs.short-sha }}.tar.gz
+        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       run: |
         tar -xzf "$ARTIFACTS_ARCHIVE"
 
