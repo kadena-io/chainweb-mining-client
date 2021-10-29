@@ -53,8 +53,6 @@ jobs:
     # Tests
     - name: Run Tests
       run: cabal test
-    - name: Run Benchmarks
-      run: cabal bench
 
     # Artifacts
     - name: Prepare artifacts
