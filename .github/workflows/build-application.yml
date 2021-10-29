@@ -67,14 +67,14 @@ jobs:
         ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       run: |
         echo "ARTIFACTS_ARCHIVE: $ARTIFACTS_ARCHIVE"
-        mkdir -p $ARTIFACT_DIR
-        cp $(cabal list-bin chainweb-mining-client) $ARTIFACT_DIR
-        cp README.md $ARTIFACT_DIR
-        cp CHANGELOG.md $ARTIFACT_DIR
-        cp LICENSE $ARTIFACT_DIR
-        cp chainweb.cabal $ARTIFACT_DIR
-        cp cabal.project $ARTIFACT_DIR
-        cp cabal.project.freeze $ARTIFACT_DIR
+        mkdir -p $ARTIFACTS_DIR
+        cp $(cabal list-bin chainweb-mining-client) $ARTIFACTS_DIR
+        cp README.md $ARTIFACTS_DIR
+        cp CHANGELOG.md $ARTIFACTS_DIR
+        cp LICENSE $ARTIFACTS_DIR
+        cp chainweb.cabal $ARTIFACTS_DIR
+        cp cabal.project $ARTIFACTS_DIR
+        cp cabal.project.freeze $ARTIFACTS_DIR
         tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
     - name: Safe artifacts
       uses: actions/upload-artifact@v2
