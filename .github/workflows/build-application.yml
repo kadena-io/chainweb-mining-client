@@ -20,7 +20,13 @@ jobs:
     - name: Set Variables
       id: vars
       shell: bash
-      run: echo "::set-output name=short-sha::${GITHUB_SHA::7}"
+      run: |
+        cat >> GITHUB_ENV <<EOF
+        SHORT_SHA=${GITHUB_SHA::7}
+        ARTIFACTS_DIR=./artifacts/chainweb-mining-client
+        ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${GITHUB_SHA::7}.tar.gz
+        EOF
 
     # Setup
     - name: Checkout repository
@@ -61,10 +67,6 @@ jobs:
 
     # Artifacts
     - name: Prepare artifacts
-      env:
-        ARTIFACTS_DIR: ./artifacts/chainweb-mining-client
-        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       run: |
         echo "ARTIFACTS_ARCHIVE: $ARTIFACTS_ARCHIVE"
         mkdir -p $ARTIFACTS_DIR
@@ -78,10 +80,6 @@ jobs:
         tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
     - name: Safe artifacts
       uses: actions/upload-artifact@v2
-      env:
-        ARTIFACTS_DIR: ./artifacts/chainweb-mining-client
-        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: ${{ env.ARTIFACTS_ARCHIVE }}
@@ -100,28 +98,26 @@ jobs:
     env:
       GHC_VERSION: ${{ matrix.ghc }}
       OS: ${{ matrix.os }}
-      GIT_SHA_SHORT: ${GIT_SHA::7}
       COMPILER: ghc-${{ matrix.ghc }}
 
     steps:
     - name: Set Variables
       id: vars
       shell: bash
-      run: echo "::set-output name=short-sha::${GITHUB_SHA::7}"
+      run: |
+        cat >> GITHUB_ENV <<EOF
+        SHORT_SHA=${GITHUB_SHA::7}
+        ARTIFACTS_NAME=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
+        ARTIFACTS_ARCHIVE=chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${GITHUB_SHA::7}.tar.gz
+        EOF
 
     - name: Get build artifacts
       uses: actions/download-artifact@v2
-      env:
-        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: .
 
     - name: Extract artifacts
-      env:
-        ARTIFACTS_NAME: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}
-        ARTIFACTS_ARCHIVE: chainweb-mining-client-${{ matrix.ghc }}.${{ matrix.os }}.${{ steps.vars.outputs.short-sha }}.tar.gz
       run: |
         tar -xzf "$ARTIFACTS_ARCHIVE"
 
