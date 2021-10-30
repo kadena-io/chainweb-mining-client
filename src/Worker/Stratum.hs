@@ -43,6 +43,7 @@ module Worker.Stratum
 , parseMiningResponse
 ) where
 
+import Control.Applicative
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
@@ -208,6 +209,8 @@ data MiningRequest
         -- }
         -- @
         --
+        -- Note: BM-K1 omits the @null@ parameter
+        --
     | Authorize MsgId (Username, Password)
         -- ^ Authorize
         --
@@ -279,19 +282,23 @@ instance A.FromJSON MiningRequest where
     parseJSON = A.withObject "MiningRequest" $ \o -> do
         mid <- (o A..: "id") :: A.Parser MsgId
         (o A..: "method") >>= \case
-            "mining.subscribe" -> (Subscribe mid <$> o A..: "params") A.<?> A.Key "mining.subscribe"
+            "mining.subscribe" -> (Subscribe mid <$> parseSubscribeParams o) A.<?> A.Key "mining.subscribe"
             "mining.authorize" -> (Authorize mid <$> o A..: "params") A.<?> A.Key "mining.authorize"
             "mining.submit" -> (Submit mid . submitParams <$> o A..: "params") A.<?> A.Key "mining.submit"
             m -> fail $ "unknown message type " <> m
       where
         submitParams (uw, j, n) = let (u,w) = T.break (== '.') uw in (Username u, ClientWorker w, j, n)
+
+        parseSubscribeParams o = o A..: "params"
+            <|> ((, Static :: Static 'Nothing) . _getT1 <$> o A..: "params")
+            <|> (\() -> (Agent "unknown", Static :: Static 'Nothing)) <$> o A..: "params"
     {-# INLINE parseJSON #-}
 
 -- -------------------------------------------------------------------------- --
 -- Notification
 
 data MiningNotification
-    = SetTarget StratumTarget
+    = SetTarget (T1 StratumTarget)
         -- ^ Set Target
         --
         -- * params: @["32 bytes target in big endian hex"]@
@@ -346,7 +353,7 @@ instance A.FromJSON MiningNotification where
 
 data MiningResponse
     = SubscribeResponse MsgId (Either Error (Static 'Nothing, Nonce1, Nonce2Size))
-    | AuthorizeResponse MsgId (Either Error (Static 'True))
+    | AuthorizeResponse MsgId (Either Error (T1 (Static 'True)))
     | SubmitResponse MsgId (Either Error Bool)
 
 deriving instance Show MiningResponse
@@ -358,7 +365,7 @@ subscribeError :: MsgId -> T.Text -> MiningResponse
 subscribeError mid msg = SubscribeResponse mid (Left $ Error (2,msg, A.Null))
 
 authorizeResponse :: MsgId -> MiningResponse
-authorizeResponse mid = AuthorizeResponse mid (Right Static)
+authorizeResponse mid = AuthorizeResponse mid (Right $ T1 Static)
 
 authorizeError :: MsgId -> T.Text -> MiningResponse
 authorizeError mid msg = AuthorizeResponse mid (Left $ Error (1, msg, A.Null))
@@ -650,7 +657,7 @@ notify app job = do
     -- FIXME set target only if needed. Find out whether changing target slows down the ASICs
     -- If it is expensive we'll have to implement mining of shares.
     --
-    send app $ SetTarget (StratumTarget $ _jobTarget job)
+    send app $ SetTarget $ T1 $ StratumTarget $ _jobTarget job
     send app $ Notify (_jobId job, WorkHeader (_jobWork job), True) -- for now we always replace previous wor
 
 

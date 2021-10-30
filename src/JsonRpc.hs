@@ -20,6 +20,7 @@ module JsonRpc
 (
 -- * JSON Utils
   Static(..)
+, T1(..)
 
 -- JSON RPC Message Ids
 , MsgId(..)
@@ -38,6 +39,7 @@ module JsonRpc
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Encoding.Internal as A
 import qualified Data.Aeson.Types as A (Pair, Parser)
+import Data.Foldable
 import qualified Data.Text as T
 
 -- internal modules
@@ -81,6 +83,23 @@ instance A.FromJSON (Static 'False) where
     parseJSON = A.withBool "False" $ \b -> if b
         then fail "expected constant \'false\' but got \'true\'"
         else return Static
+    {-# INLINE parseJSON #-}
+
+-- | Unary Tuple
+--
+newtype T1 a = T1 { _getT1 :: a }
+    deriving (Show, Eq, Ord)
+
+instance A.ToJSON a => A.ToJSON (T1 a) where
+    toEncoding a = A.toEncoding [a]
+    toJSON a = A.toJSON [a]
+    {-# INLINE toEncoding #-}
+    {-# INLINE toJSON #-}
+
+instance A.FromJSON a => A.FromJSON (T1 a) where
+    parseJSON = A.withArray "T1" $ \x -> case toList x of
+        [a] -> T1 <$> A.parseJSON a
+        l -> fail $ "Expected array of length 1, got length " <> show (length l)
     {-# INLINE parseJSON #-}
 
 -- -------------------------------------------------------------------------- --
