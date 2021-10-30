@@ -60,7 +60,6 @@ import Data.Hashable
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
 import Data.Streaming.Network
-import Data.String
 import qualified Data.Text as T
 import Data.Word
 
@@ -280,9 +279,9 @@ instance A.FromJSON MiningRequest where
     parseJSON = A.withObject "MiningRequest" $ \o -> do
         mid <- (o A..: "id") :: A.Parser MsgId
         (o A..: "method") >>= \case
-            "mining.subscribe" -> Subscribe mid <$> o A..: "params" A.<?> A.Key "mining.subscribe"
-            "mining.authorize" -> Authorize mid <$> o A..: "params" A.<?> A.Key "mining.authorize"
-            "mining.submit" -> Submit mid . submitParams <$> o A..: "params" A.<?> A.Key "mining.submit"
+            "mining.subscribe" -> (Subscribe mid <$> o A..: "params") A.<?> A.Key "mining.subscribe"
+            "mining.authorize" -> (Authorize mid <$> o A..: "params") A.<?> A.Key "mining.authorize"
+            "mining.submit" -> (Submit mid . submitParams <$> o A..: "params") A.<?> A.Key "mining.submit"
             m -> fail $ "unknown message type " <> m
       where
         submitParams (uw, j, n) = let (u,w) = T.break (== '.') uw in (Username u, ClientWorker w, j, n)
@@ -675,7 +674,7 @@ messages app = go mempty
             return $ ConnectionClosed "Connection closed unexpectedly"
         P.Done i' val -> case A.fromJSON val of
             A.Error err ->
-                return $ StratumError $ "Unrecognized message: " <> T.pack err
+                return $ StratumError $ "Unrecognized message: " <> T.pack err <> ". " <> sshow val
             A.Success result -> do
                 S.yield result
                 go i'
