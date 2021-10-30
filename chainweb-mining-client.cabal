@@ -44,6 +44,7 @@ executable chainweb-mining-client
     hs-source-dirs: main, src
     main-is: Main.hs
     other-modules:
+        JsonRpc
         PkgInfo
         Logger
         Worker
