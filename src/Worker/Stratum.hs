@@ -7,12 +7,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- |
 -- Module: Worker.Stratum
@@ -25,15 +27,16 @@
 --
 -- cf. https://gist.github.com/mightybyte/f1567c2bec0380539c638225fb8c1cf4
 --
--- Open Questions:
+-- TODO
 --
--- * error codes
+-- * Create datatype for Error codes
+-- * Find out if there is some standard for reporting errors
+-- * proper reporting of discarded and stale shares (what are the precise modes)
+--
+-- Open Questions
 -- * is authorizaiton required or optional (what are possible results)
--- * meaning of agent
--- * meaning of worker
 -- * meaning of result of submit
--- * meaning notify 'clear' field
--- * how long are jobids retained
+-- * precise meaning notify 'clear' field
 --
 module Worker.Stratum
 ( withStratumServer
@@ -41,6 +44,12 @@ module Worker.Stratum
 
 -- * Useful for implementing Clients
 , parseMiningResponse
+
+-- * Internal
+, Nonce1(..)
+, NonceSize(..)
+, Nonce2(..)
+, composeNonce
 ) where
 
 import Control.Applicative
@@ -54,20 +63,16 @@ import Control.Monad.IO.Class
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Types as A
 import qualified Data.Attoparsec.ByteString as P
+import Data.Bifunctor
+import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Short as BS
 import Data.Hashable
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
+import Data.Maybe
 import Data.Streaming.Network
 import qualified Data.Text as T
-import Data.Word
-
-import Foreign.Ptr
-import Foreign.Storable
-
-import Numeric.Natural
 
 import qualified Streaming.Prelude as S
 
@@ -87,25 +92,61 @@ import Worker
 import WorkerUtils
 
 -- -------------------------------------------------------------------------- --
--- Parameter Types
+-- Nonces
 
--- | The mining agent of the client. For Kadena pools this can be any string.
+-- | Size of a nonce in bytes. This is a number between 0 and 8.
 --
-newtype Agent = Agent T.Text
-    deriving (Show, Eq, Ord)
+newtype NonceSize = NonceSize Int
+    deriving (Show, Eq, Ord, Integral, Real, Enum, Num)
     deriving newtype (A.ToJSON, A.FromJSON)
 
--- | The most significant bytes of the nonce. Thse are set by the pool.
+-- | Smart Constructor for NonceSize
+--
+nonceSize :: Integral a => a -> Maybe NonceSize
+nonceSize (int -> a)
+    | a >= 0 && a <= 8 = Just $ NonceSize a
+    | otherwise = Nothing
+{-# INLINE nonceSize #-}
+
+nonceSize' :: Show a => Integral a => a -> NonceSize
+nonceSize' a = fromMaybe (error $ "Invalid Nonce Size: " <> sshow a) $ nonceSize a
+{-# INLINE nonceSize' #-}
+
+-- | The most significant bytes of the nonce. These are set by the pool.
 --
 -- The nonce bytes are injected into the work header in little endian encoding:
 -- @Nonce2 <> Nonce1@
 --
--- In stratum messages nonce bytes are encoding as hex strings with big endian
+-- In stratum messages nonce bytes are encoded as hex strings with big endian
 -- byte order.
 --
-newtype Nonce1 = Nonce1 BS.ShortByteString
-    deriving (Show, Eq, Ord)
-    deriving (A.ToJSON, A.FromJSON) via ReversedHexEncodedShortByteString
+data Nonce1 = Nonce1 NonceSize Nonce
+    deriving (Eq, Ord)
+
+-- | Smart Constructor for Nonce1
+--
+nonce1 :: NonceSize -> Nonce -> Maybe Nonce1
+nonce1 s n@(Nonce w)
+    | w < 2 ^ (s * 8) = Just $ Nonce1 s n
+    | otherwise = Nothing
+{-# INLINE nonce1 #-}
+
+instance Show Nonce1 where
+    show (Nonce1 _ n) = show n
+
+instance A.ToJSON Nonce1 where
+    toEncoding (Nonce1 _ n) = A.toEncoding n
+    toJSON (Nonce1 _ n) = A.toJSON n
+    {-# INLINE toEncoding #-}
+    {-# INLINE toJSON #-}
+
+parseNonce1 :: NonceSize -> A.Value -> A.Parser Nonce1
+parseNonce1 s v = do
+    n <- A.parseJSON v
+    case nonce1 s n of
+        Nothing -> fail $ "Nonce with invalid size (expected size " <> show s <> "): " <> show n
+        Just x -> return x
+{-# INLINE parseNonce1 #-}
 
 -- | The least significant bytes of the nonce. These respresent the share of
 -- work performed by the client.
@@ -113,49 +154,82 @@ newtype Nonce1 = Nonce1 BS.ShortByteString
 -- The nonce bytes are injected into the work header in little endian encoding:
 -- @Nonce2 <> Nonce1@
 --
--- In stratum messages nonce bytes are encoding as hex strings with big endian
+-- In stratum messages nonce bytes are encoded as hex strings with big endian
 -- byte order.
 --
-newtype Nonce2 = Nonce2 BS.ShortByteString
-    deriving (Show, Eq, Ord)
-    deriving (A.ToJSON, A.FromJSON) via ReversedHexEncodedShortByteString
+data Nonce2 = Nonce2 NonceSize Nonce
+    deriving (Eq, Ord)
 
--- | TODO: check length of nonce2
+-- | Smart Constructor for Nonce2
+--
+nonce2 :: NonceSize -> Nonce -> Maybe Nonce2
+nonce2 s n@(Nonce w)
+    | w < 2 ^ (s * 8) = Just $ Nonce2 s n
+    | otherwise = Nothing
+{-# INLINE nonce2 #-}
+
+instance Show Nonce2 where
+    show (Nonce2 _ n) = show n
+
+instance A.ToJSON Nonce2 where
+    toEncoding (Nonce2 _ n) = A.toEncoding n
+    toJSON (Nonce2 _ n) = A.toJSON n
+    {-# INLINE toEncoding #-}
+    {-# INLINE toJSON #-}
+
+parseNonce2 :: NonceSize -> A.Value -> A.Parser Nonce2
+parseNonce2 s v = do
+    n <- A.parseJSON v
+    case nonce2 s n of
+        Nothing -> fail $ "Nonce with invalid size (expected size " <> show s <> "): " <> show n
+        Just x -> return x
+{-# INLINE parseNonce2 #-}
+
+-- | Compose Nonce1 (pool) and Nonce2 (mining client) to form the final
+-- nonce.
+--
+-- Nonces are stored as Word64 and are injected into the block header in little
+-- endian binary encoding. They are sent to the client in big endian hexadecimal
+-- encoding.
 --
 composeNonce :: Nonce1 -> Nonce2 -> Nonce
-composeNonce (Nonce1 n1) (Nonce2 n2) = Nonce $! unsafePerformIO $
-    BS.useAsCStringLen (n2 <> n1) $ \(ptr, _) -> peek @Word64 (castPtr ptr)
-        -- FIXME make sure this is LE
-
+composeNonce (Nonce1 s1 (Nonce n1)) (Nonce2 s2 (Nonce n2))
+    | s1 + s2 == 8 = Nonce $ shiftL n2 (8 * int s1) + n1
+    | otherwise = error $ "composeNonce: invalid size of combined nonce"
+        <> "; size of nonce1: " <> show s1
+        <> "; size of nonce2: " <> show s2
 {-# INLINE composeNonce #-}
 
--- | The size of the @Nonce2@ in bytes.
+-- -------------------------------------------------------------------------- --
+-- Parameter Types
+
+-- | The mining agent of the client. For Kadena pools this can be any string.
 --
-newtype Nonce2Size = Nonce2Size Natural
-    deriving (Show, Eq, Ord)
-    deriving newtype (A.ToJSON, A.FromJSON)
+newtype Agent = Agent T.Text
+    deriving (Eq, Ord)
+    deriving newtype (Show, A.ToJSON, A.FromJSON)
 
 -- | Kadena Pools expect the user name to be the miner key. An optional worker
 -- id can be appended with a dot as separator. It allows users to to identify
 -- shares/rewards with workers in the statistics of the pool.
 --
 newtype Username = Username T.Text
-    deriving (Show, Eq, Ord)
-    deriving newtype (A.ToJSON, A.FromJSON)
+    deriving (Eq, Ord)
+    deriving newtype (Show, A.ToJSON, A.FromJSON)
 
 -- | This is currently ignored by all Kadena Pools.
 --
 newtype Password = Password T.Text
-    deriving (Show, Eq, Ord)
-    deriving newtype (A.ToJSON, A.FromJSON)
+    deriving (Eq, Ord)
+    deriving newtype (Show, A.ToJSON, A.FromJSON)
 
 -- | The Identifier for a job that is sent to the client. It is used to match a
 -- nonce that is submitted by the client with a work header.
 --
 newtype JobId = JobId Int
-    deriving (Show, Eq, Ord)
+    deriving (Eq, Ord)
     deriving newtype (Hashable)
-    deriving (A.ToJSON, A.FromJSON) via (HexInt Int)
+    deriving (Show, A.ToJSON, A.FromJSON) via (IntHexText Int)
 
 -- | A string that identifies the client mining device. It is submited with
 -- shares and pools my keep a record for the user to identify what device mined
@@ -164,18 +238,6 @@ newtype JobId = JobId Int
 newtype ClientWorker = ClientWorker T.Text
     deriving (Show, Eq, Ord)
     deriving newtype (A.ToJSON, A.FromJSON)
-
--- | Hex-Encoding of the work bytes that are sent to the mining client.
---
-newtype WorkHeader = WorkHeader Work
-    deriving (Show, Eq, Ord)
-    deriving (A.ToJSON, A.FromJSON) via HexEncodedShortByteString
-
--- | Target in big endian hex representation
---
-newtype StratumTarget = StratumTarget Target
-    deriving (Show, Eq, Ord)
-    deriving (A.ToJSON, A.FromJSON) via ReversedHexEncodedShortByteString
 
 -- -------------------------------------------------------------------------- --
 -- Requests
@@ -264,6 +326,8 @@ data MiningRequest
         -- @
         --
 
+deriving instance Show MiningRequest
+
 instance A.ToJSON MiningRequest where
     toEncoding = A.pairs . mconcat . \case
         Subscribe mid params -> requestProperties "mining.subscribe" params (Just mid)
@@ -278,27 +342,33 @@ instance A.ToJSON MiningRequest where
     {-# INLINE toEncoding #-}
     {-# INLINE toJSON #-}
 
-instance A.FromJSON MiningRequest where
-    parseJSON = A.withObject "MiningRequest" $ \o -> do
-        mid <- (o A..: "id") :: A.Parser MsgId
-        (o A..: "method") >>= \case
-            "mining.subscribe" -> (Subscribe mid <$> parseSubscribeParams o) A.<?> A.Key "mining.subscribe"
-            "mining.authorize" -> (Authorize mid <$> o A..: "params") A.<?> A.Key "mining.authorize"
-            "mining.submit" -> (Submit mid . submitParams <$> o A..: "params") A.<?> A.Key "mining.submit"
-            m -> fail $ "unknown message type " <> m
-      where
-        submitParams (uw, j, n) = let (u,w) = T.break (== '.') uw in (Username u, ClientWorker w, j, n)
+parseMiningRequest :: NonceSize -> A.Value -> A.Parser MiningRequest
+parseMiningRequest nonce2Size = A.withObject "MiningRequest" $ \o -> do
+    mid <- (o A..: "id") :: A.Parser MsgId
+    (o A..: "method") >>= \case
+        "mining.subscribe" -> (Subscribe mid <$> parseSubscribeParams o) A.<?> A.Key "mining.subscribe"
+        "mining.authorize" -> (Authorize mid <$> parseAuthorizeParams o) A.<?> A.Key "mining.authorize"
+        "mining.submit" -> (Submit mid <$> parseSubmitParams o) A.<?> A.Key "mining.submit"
+        m -> fail $ "unknown message type " <> m
+  where
+    parseSubmitParams o = do
+        (uw, j, n) <- o A..: "params"
+        n2 <- parseNonce2 nonce2Size n
+        let (u,w) = bimap Username ClientWorker $ T.break (== '.') uw
+        return (u, w, j, n2)
 
-        parseSubscribeParams o = o A..: "params"
-            <|> ((, Static :: Static 'Nothing) . _getT1 <$> o A..: "params")
-            <|> (\() -> (Agent "unknown", Static :: Static 'Nothing)) <$> o A..: "params"
-    {-# INLINE parseJSON #-}
+    parseSubscribeParams o = o A..: "params"
+        <|> ((, Static :: Static 'Nothing) . _getT1 <$> o A..: "params")
+        <|> (\() -> (Agent "unknown", Static :: Static 'Nothing)) <$> o A..: "params"
+
+    parseAuthorizeParams o = o A..: "params"
+{-# INLINE parseMiningRequest #-}
 
 -- -------------------------------------------------------------------------- --
 -- Notification
 
 data MiningNotification
-    = SetTarget (T1 StratumTarget)
+    = SetTarget (T1 Target)
         -- ^ Set Target
         --
         -- * params: @["32 bytes target in big endian hex"]@
@@ -312,7 +382,7 @@ data MiningNotification
         -- @
         --
 
-    | Notify (JobId, WorkHeader, Bool)
+    | Notify (JobId, Work, Bool)
         -- ^ Notify
         --
         -- * params: @["jobId", "header", cleanJob]@
@@ -352,20 +422,20 @@ instance A.FromJSON MiningNotification where
 -- Respones
 
 data MiningResponse
-    = SubscribeResponse MsgId (Either Error (Static 'Nothing, Nonce1, Nonce2Size))
-    | AuthorizeResponse MsgId (Either Error (T1 (Static 'True)))
+    = SubscribeResponse MsgId (Either Error (Nonce1, NonceSize))
+    | AuthorizeResponse MsgId (Either Error ())
     | SubmitResponse MsgId (Either Error Bool)
 
 deriving instance Show MiningResponse
 
-subscribeResponse :: MsgId -> Nonce1 -> Nonce2Size -> MiningResponse
-subscribeResponse mid n1 n2s = SubscribeResponse mid $ Right (Static, n1, n2s)
+subscribeResponse :: MsgId -> Nonce1 -> NonceSize -> MiningResponse
+subscribeResponse mid n1 n2s = SubscribeResponse mid $ Right (n1, n2s)
 
 subscribeError :: MsgId -> T.Text -> MiningResponse
 subscribeError mid msg = SubscribeResponse mid (Left $ Error (2,msg, A.Null))
 
 authorizeResponse :: MsgId -> MiningResponse
-authorizeResponse mid = AuthorizeResponse mid (Right $ T1 Static)
+authorizeResponse mid = AuthorizeResponse mid (Right ())
 
 authorizeError :: MsgId -> T.Text -> MiningResponse
 authorizeError mid msg = AuthorizeResponse mid (Left $ Error (1, msg, A.Null))
@@ -378,16 +448,22 @@ submitError mid msg = SubmitResponse mid (Left $ Error (3, msg, A.Null))
 
 instance A.ToJSON MiningResponse where
     toEncoding = A.pairs . mconcat . \case
-        SubscribeResponse mid r -> responseProperties mid r
+        SubscribeResponse mid r -> responseProperties mid (subscribeReponseParams r)
         AuthorizeResponse mid r -> responseProperties mid r
         SubmitResponse mid r -> responseProperties mid r
     toJSON = A.object . \case
-        SubscribeResponse mid r -> responseProperties mid r
+        SubscribeResponse mid r -> responseProperties mid (subscribeReponseParams r)
         AuthorizeResponse mid r -> responseProperties mid r
         SubmitResponse mid r -> responseProperties mid r
     {-# INLINE toEncoding #-}
     {-# INLINE toJSON #-}
 
+subscribeReponseParams :: Either Error (Nonce1, NonceSize) -> Either Error (Static 'Nothing, Nonce1, NonceSize)
+subscribeReponseParams (Right (n1, ns)) = Right (StaticNull, n1, ns)
+subscribeReponseParams (Left e) = Left e
+
+-- | FIXME parse nonce in subscribe response
+--
 parseMiningResponse
     :: (MsgId -> MiningRequest)
         -- ^ Lookup for matching MiningRequests
@@ -396,15 +472,19 @@ parseMiningResponse
 parseMiningResponse pendingRequests = A.withObject "MiningResponse" $ \o -> do
     mid <- (o A..: "id") :: A.Parser MsgId
     case pendingRequests mid of
-        r@Subscribe{} -> (r,) . SubscribeResponse mid <$> parseResponse o
-        r@Authorize{} -> (r,) . AuthorizeResponse mid <$> parseResponse o
-        r@Submit{} -> (r,) . SubscribeResponse mid <$> parseResponse o
+        r@Subscribe{} -> (r,) . SubscribeResponse mid <$> parseResponse' parseSubscribeParams o
+        r@Authorize{} -> (r,) . AuthorizeResponse mid <$> parseResponse' parseAuthorizeParams o
+        r@Submit{} -> (r,) . SubmitResponse mid <$> parseResponse o
+
+  where
+    parseSubscribeParams = A.parseJSON >=> \(StaticNull, v, s) ->
+        (,s) <$> parseNonce1 (8 - s) v
+
+    parseAuthorizeParams = A.parseJSON >=> \(T1 StaticTrue) -> return ()
 {-# INLINE parseMiningResponse #-}
 
 -- -------------------------------------------------------------------------- --
 -- Clients and Shares
-
-newtype NonceSize = NonceSize Int
 
 -- | 16 bit allows for 65536 mining clients
 --
@@ -415,6 +495,12 @@ data PoolCtx = PoolCtx
     { _workerAuthorization :: Authorize
     }
 
+-- | A share is a solution of a job with respect to the session target.
+--
+-- Shares are the basis for paying out miners. This structure stores all
+-- information about a share that is needed for a pool to implement differnt
+-- payment methods.
+--
 data Share = Share
     { _shareId :: !JobId
     , _shareTarget :: !Target
@@ -434,20 +520,26 @@ data MiningClient = MiningClient
 -- authorize :: Username -> WorkerId -> Password -> IO Bool
 -- authorize = error "TODO"
 
-
-
-
 -- -------------------------------------------------------------------------- --
 -- Intialize Global Stratum Worker
 
+-- | TODO: make this configurable
+--
 host :: HostPreference
 host = "*"
 
+-- | TODO: make this configurable
+--
 port :: Int
 port = 1917
 
 type Authorize = Username -> Password -> IO (Either T.Text ())
 
+-- | TODO distinguish between job and share:
+--
+-- Job: global from worker, solution for block
+-- Share: session, solution for share target
+--
 data Job = Job
     { _jobId :: !JobId
     , _jobTarget :: !Target
@@ -487,15 +579,39 @@ data StratumServerCtx = StratumServerCtx
         -- For bookkeeping it is also possible to associate a device/worker id
         -- with the shares from a session.
 
-    , _ctxJobs :: !(MVar (HM.HashMap JobId Job))
+    , _ctxJobs :: !(TVar (HM.HashMap JobId Job))
+        -- ^ there might be some contention on this variable, but we don't care
+        -- too much. It is modified only by the workers, which access it for
+        -- each new work item that they get. That's roughly the block rate
+        -- time the numbers of worker. The latter number should be small.
+        -- (there's little benefit in having a larger number)
+        --
+        -- It is read by all sessions using readTVarIO. If a job disappears
+        -- while processing the share, the share is still counted, even if the
+        -- block is solved in between. So, the time of the `readTVarIO` of the
+        -- job marks the point in time until a share must be found. (we could
+        -- change that by doing another read + job lookup when the share is
+        -- recorded)
+        --
+        -- Solutions are synchronized on the result MVar within a job.
+        -- Contention on that is much lower, since only valid solution are
+        -- submitted to that variable.
+
     , _ctxCurrentJob :: !(TVar Job)
+        -- ^ the most recent job. This is used as basis for the job stream
+        -- of each session. There is no guarantee that each session sees each
+        -- job. Actually, it may even make sense for sessions to ignore some of
+        -- these in order to reduce the number of notifications that are send to
+        -- the client.
+
     , _ctxCurrentId :: !(IORef Int)
+        -- ^ Ticket counter for job ids.
     }
 
 newStratumServerCtx :: IO StratumServerCtx
 newStratumServerCtx = StratumServerCtx
     (\_ _ -> return (Right ()))
-    <$> newMVar mempty
+    <$> newTVarIO mempty
     <*> newTVarIO noopJob
     <*> newIORef 0
 
@@ -513,13 +629,26 @@ submitWork ctx l _nonce target work =  withLogTag l "Stratum Worker" $ \logger -
         job <- umask $ newJob logger ctx target work
         flip onException (writeLog logger L.Info ("discarded unfinished job"  <> sshow (_jobId job))) $
             flip finally (removeJob ctx (_jobId job)) $ umask $ do
-                nonce <- takeMVar (_jobResult job)
-                !w <- injectNonce nonce (_jobWork job)
-                writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
-                return w
-                -- FIXME:
-                -- * check the share target -> record share in pool context
-                -- * check the block target -> submit solution to chain
+                checkJob logger job
+      where
+        -- Check that the solution for a job is correct. This should never fail.
+        -- Sessions should only submit shares that are actually solving the
+        -- block.
+        checkJob logger job = do
+            nonce <- takeMVar (_jobResult job) -- at this point the mvar is available again
+            !w <- injectNonce nonce (_jobWork job)
+            fastCheckTarget (_jobTarget job) w >>= \case
+                True -> do
+                    writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
+                    return w
+                False -> do
+                    writeLog logger L.Error $ "rejected job: invalid result " <> sshow (_jobId job)
+                    writeLog logger L.Info $ "invalid nonce: " <> sshow nonce
+                        <> ", target: " <> sshow (_jobTarget job)
+                        <> ", job work: " <> sshow (_jobWork job)
+                        <> ", result work: " <> sshow w
+                        <> ". Continue with job"
+                    checkJob logger job
 
 newJob :: Logger -> StratumServerCtx -> Target -> Work -> IO Job
 newJob logger ctx target work = do
@@ -531,26 +660,53 @@ newJob logger ctx target work = do
     flip onException (removeJob ctx jid) $ do
 
         -- add job to the job table
-        modifyMVar (_ctxJobs ctx) $ \m -> let !r = HM.insert jid job m in return (r, ())
+        atomically $ modifyTVar' (_ctxJobs ctx) $ HM.insert jid job
 
         -- notify all active connections
+        -- (no need to do this in the same tx as above)
         atomically $ writeTVar (_ctxCurrentJob ctx) job
 
         writeLog logger L.Info $ "created new job " <> T.pack (show (_jobId job))
         return job
 
 removeJob :: StratumServerCtx -> JobId -> IO ()
-removeJob ctx jid =
-    modifyMVar (_ctxJobs ctx) $ \m -> let !r = HM.delete jid m in return (r, ())
+removeJob ctx jid = atomically $ modifyTVar' (_ctxJobs ctx) $ HM.delete jid
 
 -- -------------------------------------------------------------------------- --
 -- Sessions
 
+-- | ASICs are powerful machines. When connected to a network with low
+-- difficulty it may produce a large amount of shares that can overload the
+-- network, the stratum server, or the device itself. For that reason we set a
+-- minimum target -- even if it means that the client does more work than needed
+-- to solve a single block. In the end, producing blocks faster than they can be
+-- processed down stream has no benefit and can even be harmful.
+--
+-- TODO: this should be configurable (possibly also on a per agent base)
+--
+minTarget :: Target
+minTarget = "0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+initialTarget :: Target
+initialTarget = minTarget
+
+defaultNonce1 :: Nonce1
+defaultNonce1 = Nonce1 2 (Nonce 0xffff)
+
+defaultNonce2Size :: NonceSize
+defaultNonce2Size = NonceSize (8 - s)
+  where
+    (Nonce1 (NonceSize s) _) = defaultNonce1
+
 data SessionState = SessionState
     { _sessionNonce1 :: !Nonce1
+    , _sessionTarget :: !(TVar Target)
     , _authorized :: !(TMVar Username)
     , _subscribed :: !(TMVar Agent)
     }
+
+sessionNonce2Size :: SessionState -> NonceSize
+sessionNonce2Size s = let Nonce1 s1 _ = _sessionNonce1 s in 8 - s1
 
 data AppResult
     = JsonRpcError T.Text
@@ -570,9 +726,12 @@ session :: Logger -> StratumServerCtx -> AppData -> IO ()
 session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow (appSockAddr app)) $ \logger ->
     flip finally (appCloseConnection app) $ do
         sessionCtx <- initState
-        r <- race (processRequests sessionCtx) $ do
+
+        -- Run Request Stream and Job Stream
+        r <- race (processRequests logger sessionCtx) $ do
             awaitSubscribe sessionCtx
-            S.mapM_ (notify app) jobStream
+            S.mapM_ (notify logger app sessionCtx) jobStream
+
         case r of
             Right _ -> writeLog logger L.Error "Stratum session ended unexpectedly because an internal chainweb-mining-client issue"
             Left e@(JsonRpcError msg) -> do
@@ -598,6 +757,8 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
     awaitSubscribe sctx = atomically $ void $ takeTMVar (_subscribed sctx)
 
+    -- Should we rate limit this stream by randomly skipping blocks?
+    --
     jobStream :: S.Stream (S.Of Job) IO ()
     jobStream = do
         cur <- liftIO $ readTVarIO (_ctxCurrentJob ctx)
@@ -614,34 +775,81 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
             go new
 
     -- For now we let the ASIC start at 0
-    initState = SessionState (Nonce1 "") <$> newEmptyTMVarIO <*> newEmptyTMVarIO
+    initState = SessionState defaultNonce1 <$> newTVarIO initialTarget <*> newEmptyTMVarIO <*> newEmptyTMVarIO
 
-    processRequests :: SessionState -> IO AppResult
-    processRequests sessionCtx = S.mapM_ (handleRequest sessionCtx) (messages app)
+    processRequests :: Logger -> SessionState -> IO AppResult
+    processRequests logger sessionCtx = S.mapM_ (handleRequest logger sessionCtx) (messages sessionCtx app)
 
-    handleRequest :: SessionState -> MiningRequest -> IO ()
-    handleRequest sessionCtx = \case
+    handleRequest :: Logger -> SessionState -> MiningRequest -> IO ()
+    handleRequest logger sessionCtx = \case
+
+        -- AUTHORIZE
         (Authorize mid (user, pwd)) -> do
             authorize user pwd >>= \case
                 Right () -> reply app $ authorizeResponse mid
                 Left err -> reply app $ authorizeError mid err
             atomically $ writeTMVar (_authorized sessionCtx) user
 
+        -- SUBSCRIBE
         (Subscribe mid (agent, _)) -> do
-            reply app $ subscribeResponse mid (_sessionNonce1 sessionCtx) (Nonce2Size 8)
+            reply app $ subscribeResponse mid (_sessionNonce1 sessionCtx) defaultNonce2Size
             atomically $ writeTMVar (_subscribed sessionCtx) agent
 
-        (Submit mid (_u, _w, j, n2)) -> do
+        -- SUBMIT
+        (Submit mid (_u, _w, j, n2)) -> withLogTag logger ("job-" <> sshow j) $ \jlog -> do
 
-            -- Commit new to job
-            modifyMVar (_ctxJobs ctx) $ \m -> case HM.lookup j m of
-                Nothing -> return (m, ())
+            -- Do all checks before obtaining the lock on the job
+            readTVarIO (_ctxJobs ctx) >>= \m -> case HM.lookup j m of
+
+                -- Inactive job: Discard stale share
+                Nothing -> do
+                    writeLog jlog L.Info "Discarded stale share"
+                    reply app $ SubmitResponse mid (Right False) -- FIXME is this the correct response?
+
+                -- Active Job: Check share
                 Just job -> do
-                    let n = composeNonce (_sessionNonce1 sessionCtx) n2
-                    void $ tryPutMVar (_jobResult job) n
-                    return (m, ())
 
-            reply app $ SubmitResponse mid (Right True) -- FIXME do a check?
+                    let n = composeNonce (_sessionNonce1 sessionCtx) n2
+
+                    -- Check if share is valid (matches share target)
+                    finalWork <- injectNonce n (_jobWork job)
+                    st <- readTVarIO (_sessionTarget sessionCtx)
+                    fastCheckTarget st finalWork >>= \case
+
+                        -- Invalid Share:
+                        False -> do
+                            writeLog jlog L.Warn "got invalid nonce"
+                            writeLog jlog L.Info $ "invalid nonce"
+                                <> "; nonce2:" <> sshow n2
+                                <> "; nonce: " <> sshow n
+                                <> "; work: " <> sshow (_jobWork job)
+                                <> "; final work: " <> sshow finalWork
+                                <> "; target: " <> sshow (_jobTarget job)
+                                <> "; session target: " <> sshow st
+                            reply app $ SubmitResponse mid (Left $ Error (31, "invalid nonce", A.Null)) -- FIXME is this correct reponse?
+
+                        -- Valid Share:
+                        True -> do
+                            -- We've got a valid share
+                            --
+                            -- TODO: record share in the Pool Context
+                            writeLog jlog L.Info $ "got valid share: nonce2:" <> sshow n2 <> "; nonce: " <> sshow n
+
+                            -- Check whether it is a solution for the job and
+                            -- only submit if it is. We do this here in order to
+                            -- fail early and avoid contention on the job result
+                            -- MVar.
+
+                            -- TODO we could save a few CPU cycles by reusing the hash
+                            -- from the previous check
+                            fastCheckTarget (_jobTarget job) finalWork >>= \case
+                                False -> reply app $ SubmitResponse mid (Right True)
+                                True -> do
+                                    writeLog jlog L.Info $ "solved block: nonce2:" <> sshow n2 <> "; nonce: " <> sshow n
+                                    -- Yeah, we've solved a block
+                                    -- Commit final result to job
+                                    void $ tryPutMVar (_jobResult job) n
+                                    reply app $ SubmitResponse mid (Right True)
 
 send :: A.ToJSON a => AppData -> a -> IO ()
 send app a = appWrite app (BL.toStrict $ A.encode a) >> appWrite app "\n"
@@ -652,13 +860,41 @@ replyError = send
 reply :: AppData -> MiningResponse -> IO ()
 reply = send
 
-notify :: AppData -> Job -> IO ()
-notify app job = do
-    -- FIXME set target only if needed. Find out whether changing target slows down the ASICs
-    -- If it is expensive we'll have to implement mining of shares.
+notify :: Logger -> AppData -> SessionState -> Job -> IO ()
+notify logger app sessionCtx job = do
+
+    -- FIXME set target only if needed. Find out whether changing target slows
+    -- down the ASICs If it is expensive we'll have to implement mining of
+    -- shares.
     --
-    send app $ SetTarget $ T1 $ StratumTarget $ _jobTarget job
-    send app $ Notify (_jobId job, WorkHeader (_jobWork job), True) -- for now we always replace previous wor
+    -- TODO: the pool context should provide guidance what session target
+    -- should be used. Something ala
+    --
+    -- updateSessionTarget
+    --  :: PoolCtx
+    --  -> SessionCtx
+    --  -> Target
+    --      -- ^ globally configured minimum target
+    --  -> Target
+    --      -- ^ job target
+    --  -> IO (Maybe Target)
+    --      -- ^ updated target
+    --
+    let t =  min minTarget (_jobTarget job)
+
+    writeLog logger L.Info $ "settting session target: " <> sshow t
+    send app $ SetTarget $ T1 t
+    atomically $ writeTVar (_sessionTarget sessionCtx) t
+        -- Note, that there is a small chance of a race here, if the device is really fast
+        -- and returns a solution before this is updated. We could solve that by
+        -- making the target a TMVar or MVar and taking it before we send the
+        -- "mining.set_target".
+        --
+        -- Most likely target changes are minor and shares are accepted even in
+        -- case of a race.
+
+    writeLog logger L.Info "sending notification"
+    send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
 
 
 -- | TODO: we probably need some protection against clients keeping
@@ -669,9 +905,11 @@ notify app job = do
 -- * add timeout for time between messages?
 --
 --
-messages :: AppData -> RequestStream
-messages app = go mempty
+messages :: SessionState -> AppData -> RequestStream
+messages sessionCtx app = go mempty
   where
+    nonce2Size = sessionNonce2Size sessionCtx
+
     go :: B.ByteString -> S.Stream (S.Of MiningRequest) IO AppResult
     go i = P.parseWith (liftIO (appRead app)) A.json' i >>= \case
         P.Fail _ path err ->
@@ -679,7 +917,7 @@ messages app = go mempty
         P.Partial _cont ->
             -- Can this actually happen, or would it a P.Fail?
             return $ ConnectionClosed "Connection closed unexpectedly"
-        P.Done i' val -> case A.fromJSON val of
+        P.Done i' val -> case A.parse (parseMiningRequest nonce2Size) val of
             A.Error err ->
                 return $ StratumError $ "Unrecognized message: " <> T.pack err <> ". " <> sshow val
             A.Success result -> do
@@ -694,7 +932,9 @@ withStratumServer l inner = withLogTag l "Stratum Server" $ \logger -> do
     ctx <- newStratumServerCtx
     race (server logger ctx) (inner ctx) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
-        Right _ -> return ()
+        Right _ -> do
+            writeLog logger L.Error "mining loop existed unexpectedly"
+            return ()
   where
     server logger ctx = flip finally (writeLog logger L.Info "server stopped") $ do
         writeLog logger L.Info "Start stratum server"

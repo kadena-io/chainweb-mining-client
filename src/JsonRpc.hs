@@ -4,6 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -20,6 +21,9 @@ module JsonRpc
 (
 -- * JSON Utils
   Static(..)
+, pattern StaticNull
+, pattern StaticTrue
+, pattern StaticFalse
 , T1(..)
 
 -- JSON RPC Message Ids
@@ -34,6 +38,7 @@ module JsonRpc
 -- * JSON RPC Result Messages
 , responseProperties
 , parseResponse
+, parseResponse'
 ) where
 
 import qualified Data.Aeson as A
@@ -49,6 +54,15 @@ import qualified Data.Text as T
 
 data Static (a :: k) = Static
     deriving (Show, Eq, Ord)
+
+pattern StaticNull :: Static 'Nothing
+pattern StaticNull = Static
+
+pattern StaticTrue :: Static 'True
+pattern StaticTrue = Static
+
+pattern StaticFalse :: Static 'False
+pattern StaticFalse = Static
 
 instance A.ToJSON (Static 'Nothing) where
     toEncoding _ = A.null_
@@ -91,8 +105,8 @@ newtype T1 a = T1 { _getT1 :: a }
     deriving (Show, Eq, Ord)
 
 instance A.ToJSON a => A.ToJSON (T1 a) where
-    toEncoding a = A.toEncoding [a]
-    toJSON a = A.toJSON [a]
+    toEncoding (T1 a) = A.toEncoding [a]
+    toJSON (T1 a) = A.toJSON [a]
     {-# INLINE toEncoding #-}
     {-# INLINE toJSON #-}
 
@@ -191,4 +205,10 @@ parseResponse o = o A..: "error" >>= \case
     Nothing -> o A..: "result"
     Just e -> return $ Left e
 {-# INLINE parseResponse #-}
+
+parseResponse' :: A.FromJSON a => (A.Value -> A.Parser b) -> A.Object -> A.Parser (Either a b)
+parseResponse' paramsParser o = o A..: "error" >>= \case
+    Nothing -> Right <$> (o A..: "result" >>= paramsParser)
+    Just e -> return $ Left e
+{-# INLINE parseResponse' #-}
 

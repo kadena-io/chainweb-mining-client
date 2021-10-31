@@ -25,6 +25,7 @@ module WorkerUtils
 -- * Check Target
 , fastCheckTarget
 , fastCheckTarget_
+, powHash
 ) where
 
 import Crypto.Hash
@@ -73,7 +74,7 @@ encodeTimeToWord64 t = BA.unLE . BA.toLE $ unsigned t
 -- See also: https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding
 --
 injectNonce_ :: Nonce -> Ptr Word8 -> IO ()
-injectNonce_ (Nonce n) buf = pokeByteOff buf 278 n
+injectNonce_ (Nonce n) buf = pokeByteOff buf 278 $ le64 n
 {-# INLINE injectNonce_ #-}
 
 injectNonce :: Nonce -> Work -> IO Work

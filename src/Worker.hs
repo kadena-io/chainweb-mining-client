@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -35,17 +36,22 @@ module Worker
 , Worker
 ) where
 
+import qualified Data.Aeson as A
 import Data.Bytes.Get
 import Data.Bytes.Put
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Short as BS
+import Data.Function
 import Data.Hashable
+import Data.String
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Word
 
 import GHC.Generics
+
+import Text.Read
 
 -- internal modules
 
@@ -58,9 +64,27 @@ import Utils
 --
 -- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
 --
+-- NOTE: in Stratum this value is represented as big endian encoded hexadecimal
+-- JSON string.
+--
 newtype Target = Target { _targetBytes :: BS.ShortByteString }
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Eq, Generic)
     deriving newtype (Hashable)
+    deriving (IsString, A.ToJSON, A.FromJSON) via ReversedHexEncodedShortByteString
+
+-- Arithmetic operations are done, assuming little endian byte order
+--
+instance Ord Target where
+    compare = compare `on` (B.reverse . BS.fromShort . _targetBytes)
+
+instance Show Target where
+    show (Target b) = "Target " <> show (ReversedHexEncodedShortByteString b)
+
+instance Read Target where
+    readPrec = do
+        Symbol "Target" <- lexP
+        (ReversedHexEncodedShortByteString b) <- readPrec
+        return (Target b)
 
 decodeTarget :: MonadGet m => m Target
 decodeTarget = Target . BS.toShort <$> getBytes 32
@@ -90,9 +114,22 @@ targetToText16Be = T.decodeUtf8 . B16.encode . B.reverse . BS.fromShort . _targe
 --
 -- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
 --
+-- NOTE: in Stratum this value is represented as encoded hexadecimal JSON
+-- string.
+--
 newtype Work = Work BS.ShortByteString
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Eq, Ord, Generic)
     deriving newtype (Hashable)
+    deriving (A.ToJSON, A.FromJSON) via HexEncodedShortByteString
+
+instance Show Work where
+    show (Work b) = "Work " <> show (HexEncodedShortByteString b)
+
+instance Read Work where
+    readPrec = do
+        Symbol "Work" <- lexP
+        (HexEncodedShortByteString b) <- readPrec
+        return (Work b)
 
 decodeWork :: MonadGet m => m Work
 decodeWork = Work . BS.toShort <$> getBytes 286
@@ -108,8 +145,9 @@ encodeWork (Work b) = putByteString $ BS.fromShort b
 -- | POW Nonce
 --
 newtype Nonce = Nonce Word64
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Eq, Ord, Generic)
     deriving newtype (Hashable)
+    deriving (Show, A.ToJSON, A.FromJSON) via (IntHexText Word64)
 
 -- -------------------------------------------------------------------------- --
 -- Mining Worker
