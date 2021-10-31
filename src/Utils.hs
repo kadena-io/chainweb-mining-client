@@ -193,7 +193,7 @@ quoted b = "\"" <> b <> "\""
 {-# INLINE quoted #-}
 
 nat :: forall (n :: Nat) a . KnownNat n => Integral a => a
-nat = int $ natVal' (proxy# @n)
+nat = int $ natVal' (proxy# :: Proxy# n)
 
 -- | Encode to or from little endian. This is @id@ on little endian platforms.
 --
