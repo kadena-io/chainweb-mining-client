@@ -736,9 +736,10 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
         -- Run Request Stream and Job Stream
         r <- race (processRequests logger sessionCtx) $ do
             awaitSubscribe sessionCtx
-            -- send initial target (TODO: currently this is the minimum target, base this on the agent)
-            t <- readTVarIO (_sessionTarget sessionCtx)
-            send app $ SetTarget $ T1 t
+
+            -- send initial target
+            curJob <- liftIO $ readTVarIO (_ctxCurrentJob ctx)
+            updateSessionTarget logger app sessionCtx curJob
             S.mapM_ (notify logger app sessionCtx) jobStream
 
         case r of
@@ -883,14 +884,13 @@ reply = send
 -- | TODO: this is a prototype. A pool should measure the rate at
 -- which clients submit shares and should adjust the target accordingly
 --
-updateSessionTarget
-    :: PoolCtx
-    -> SessionState
+getNewSessionTarget
+    :: SessionState
     -> Target
         -- ^ job target
     -> IO (Maybe Target)
         -- ^ updated target
-updateSessionTarget poolCtx sessionCtx jobTarget = do
+getNewSessionTarget sessionCtx jobTarget = do
     curTarget <- readTVarIO $ _sessionTarget sessionCtx
     if newTarget == curTarget
         then return Nothing
@@ -902,17 +902,15 @@ updateSessionTarget poolCtx sessionCtx jobTarget = do
     -- The final target must be inbetween maxTarget and jobTarget
     newTarget = min maxTarget (max jobTarget candidate)
 
-notify :: Logger -> AppData -> SessionState -> Job -> IO ()
-notify logger app sessionCtx job = do
+updateSessionTarget :: Logger -> AppData -> SessionState -> Job -> IO ()
+updateSessionTarget logger app sessionCtx job = do
 
-    -- FIXME set target only if needed. Find out whether changing target slows
-    -- down the ASICs If it is expensive we'll have to implement mining of
-    -- shares.
+    -- FIXME Find out whether changing target slows down the ASICs
     --
     -- TODO: the pool context should provide guidance what session target
-    -- should be used. Something ala
+    -- should be used.
     --
-    updateSessionTarget (error "poolCtx is undefined") sessionCtx (_jobTarget job) >>= \case
+    getNewSessionTarget sessionCtx (_jobTarget job) >>= \case
         Just t -> do
             writeLog logger L.Info $ "setting session target: " <> sshow t
             send app $ SetTarget $ T1 t
@@ -932,6 +930,9 @@ notify logger app sessionCtx job = do
                 <> ", level: " <> sshow (getTargetLevel (_jobTarget job))
             return ()
 
+notify :: Logger -> AppData -> SessionState -> Job -> IO ()
+notify logger app sessionCtx job = do
+    updateSessionTarget logger app sessionCtx job
     writeLog logger L.Info "sending notification"
     send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
 
