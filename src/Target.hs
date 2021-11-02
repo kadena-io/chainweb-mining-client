@@ -68,7 +68,7 @@ import Text.Read
 import Utils
 
 -- -------------------------------------------------------------------------- --
--- Level
+-- Difficulty Level
 
 newtype Level = Level Int
     deriving (Show)
@@ -127,7 +127,7 @@ nullTarget = targetSet 256
 {-# INLINE nullTarget #-}
 
 target :: Level -> Target
-target (Level i) = targetSet (i + 1)
+target (Level i) = targetSet i
 {-# INLINE target #-}
 
 getTargetLevel :: Target -> Level

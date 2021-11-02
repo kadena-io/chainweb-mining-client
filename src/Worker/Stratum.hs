@@ -78,6 +78,7 @@ import qualified Streaming.Prelude as S
 
 import System.IO.Unsafe
 import qualified System.LogLevel as L
+import System.Random.MWC
 
 -- internal modules
 
@@ -530,6 +531,11 @@ host = "*"
 port :: Int
 port = 1917
 
+serverSalt :: Int
+serverSalt = unsafePerformIO $ do
+    createSystemRandom >>= uniform
+{-# NOINLINE serverSalt #-}
+
 type Authorize = Username -> Password -> IO (Either T.Text ())
 
 -- | TODO distinguish between job and share:
@@ -621,10 +627,10 @@ newStratumServerCtx = StratumServerCtx
 -- enough active work items available.
 --
 submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
-submitWork ctx l _nonce target work =  withLogTag l "Stratum Worker" $ \logger -> do
+submitWork ctx l _nonce trg work =  withLogTag l "Stratum Worker" $ \logger -> do
     mask $ \umask -> do
-        job <- umask $ newJob logger ctx target work
-        flip onException (writeLog logger L.Info ("discarded unfinished job"  <> sshow (_jobId job))) $
+        job <- umask $ newJob logger ctx trg work
+        flip onException (writeLog logger L.Info ("discarded unfinished job: "  <> sshow (_jobId job))) $
             flip finally (removeJob ctx (_jobId job)) $ umask $ do
                 checkJob logger job
       where
@@ -648,11 +654,11 @@ submitWork ctx l _nonce target work =  withLogTag l "Stratum Worker" $ \logger -
                     checkJob logger job
 
 newJob :: Logger -> StratumServerCtx -> Target -> Work -> IO Job
-newJob logger ctx target work = do
+newJob logger ctx trg work = do
 
     -- Create new job
     jid <- JobId <$> atomicModifyIORef' (_ctxCurrentId ctx) (\x -> (x + 1, x))
-    job <- Job jid target work <$> newEmptyMVar
+    job <- Job jid trg work <$> newEmptyMVar
 
     flip onException (removeJob ctx jid) $ do
 
@@ -681,11 +687,11 @@ removeJob ctx jid = atomically $ modifyTVar' (_ctxJobs ctx) $ HM.delete jid
 --
 -- TODO: this should be configurable (possibly also on a per agent base)
 --
-minTarget :: Target
-minTarget = "0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+maxTarget :: Target
+maxTarget = "0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 initialTarget :: Target
-initialTarget = minTarget
+initialTarget = maxTarget
 
 defaultNonce1 :: Nonce1
 defaultNonce1 = Nonce1 2 (Nonce 0xffff)
@@ -696,7 +702,10 @@ defaultNonce2Size = NonceSize (8 - s)
     (Nonce1 (NonceSize s) _) = defaultNonce1
 
 data SessionState = SessionState
-    { _sessionNonce1 :: !Nonce1
+    { _sessionNonce :: !Nonce
+        -- ^ a fixed unique nonce that is derived from the application
+        -- and a server salt. It is used, for instance, to set Nonce1
+    , _sessionNonce1 :: !Nonce1
     , _sessionTarget :: !(TVar Target)
     , _authorized :: !(TMVar Username)
     , _subscribed :: !(TMVar Agent)
@@ -722,11 +731,14 @@ writeTMVar var a = tryTakeTMVar var >> putTMVar var a
 session :: Logger -> StratumServerCtx -> AppData -> IO ()
 session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow (appSockAddr app)) $ \logger ->
     flip finally (appCloseConnection app) $ do
-        sessionCtx <- initState
+        sessionCtx <- initSessionState
 
         -- Run Request Stream and Job Stream
         r <- race (processRequests logger sessionCtx) $ do
             awaitSubscribe sessionCtx
+            -- send initial target (TODO: currently this is the minimum target, base this on the agent)
+            t <- readTVarIO (_sessionTarget sessionCtx)
+            send app $ SetTarget $ T1 t
             S.mapM_ (notify logger app sessionCtx) jobStream
 
         case r of
@@ -771,8 +783,15 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
             S.yield new
             go new
 
-    -- For now we let the ASIC start at 0
-    initState = SessionState defaultNonce1 <$> newTVarIO initialTarget <*> newEmptyTMVarIO <*> newEmptyTMVarIO
+    initSessionState = do
+        let sessionNonce@(Nonce n) = Nonce . int <$> hashWithSalt serverSalt
+                $ show (appSockAddr app) <> show (appLocalAddr app)
+            sessionNonce1 = fromMaybe (error "Worker.Stratum.session.initSessionState: invalid nonce1")
+                $ nonce1 (8 - defaultNonce2Size) (Nonce $ shiftR n (8 * int defaultNonce2Size))
+        SessionState sessionNonce sessionNonce1
+            <$> newTVarIO initialTarget
+            <*> newEmptyTMVarIO
+            <*> newEmptyTMVarIO
 
     processRequests :: Logger -> SessionState -> IO AppResult
     processRequests logger sessionCtx = S.mapM_ (handleRequest logger sessionCtx) (messages sessionCtx app)
@@ -878,10 +897,10 @@ updateSessionTarget poolCtx sessionCtx jobTarget = do
         else return (Just newTarget)
   where
     -- TODO choose something smarter here:
-    candidate = reduceLevel 2 jobTarget
+    candidate = reduceLevel 4 jobTarget
 
-    -- The final target must be inbetween minTarget and jobTarget
-    newTarget = max minTarget (min jobTarget candidate)
+    -- The final target must be inbetween maxTarget and jobTarget
+    newTarget = min maxTarget (max jobTarget candidate)
 
 notify :: Logger -> AppData -> SessionState -> Job -> IO ()
 notify logger app sessionCtx job = do
@@ -905,7 +924,13 @@ notify logger app sessionCtx job = do
                 --
                 -- Most likely target changes are minor and shares are accepted even in
                 -- case of a race.
-        Nothing -> return ()
+        Nothing -> do
+            t <- readTVarIO $ _sessionTarget sessionCtx
+            writeLog logger L.Info $ "session target unchanged: " <> sshow t
+                <> ", level: " <> sshow (getTargetLevel t)
+            writeLog logger L.Info $ "job target: " <> sshow (_jobTarget job)
+                <> ", level: " <> sshow (getTargetLevel (_jobTarget job))
+            return ()
 
     writeLog logger L.Info "sending notification"
     send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
