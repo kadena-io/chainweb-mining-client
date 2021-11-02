@@ -122,7 +122,7 @@ instance A.FromJSON a => A.FromJSON (T1 a) where
 -- This is an integral number that is used to match result message to requests
 -- within a JSON RPC session.
 --
-newtype MsgId = MsgId Int
+newtype MsgId = MsgId A.Value
     deriving (Show, Eq, Ord)
     deriving newtype (A.ToJSON, A.FromJSON)
 
