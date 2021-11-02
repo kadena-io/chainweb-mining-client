@@ -35,12 +35,16 @@ module Utils
 , reversedShortByteStringToHex
 , reversedShortByteStringFromHex
 
+-- * Byte Swapped Hex-Encoded Short ByteStrings of Static Length
+, ReversedHexEncodedShortByteStringN(..)
+
 -- * Misc
 , nat
 , int
 , sshow
 , quoted
 , le64
+, le64#
 ) where
 
 import Data.Aeson
@@ -49,6 +53,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as BS
+import Data.Function
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -65,8 +70,9 @@ import GHC.TypeNats
 import Text.Read
 
 -- -------------------------------------------------------------------------- --
--- Hexadecimal Encoding for Integral Types
-
+--
+-- | Hexadecimal Encoding for Integral Types
+--
 newtype IntHexText a = IntHexText { _getIntHexText :: a}
     deriving newtype (Eq, Ord, Integral, Enum, Real, Num)
 
@@ -88,8 +94,9 @@ instance (Show a, Integral a) => FromJSON (IntHexText a) where
     {-# INLINE parseJSON #-}
 
 -- -------------------------------------------------------------------------- --
--- Hex Encoded Short ByteString
-
+--
+-- | Hex Encoded Short ByteString
+--
 newtype HexEncodedShortByteString = HexEncodedShortByteString
     { _getHexEncodedShortByteString :: BS.ShortByteString }
     deriving (Eq, Ord)
@@ -133,11 +140,16 @@ shortByteStringFromHex = fmap BS.toShort . B16.decode . T.encodeUtf8
 {-# INLINE shortByteStringFromHex #-}
 
 -- -------------------------------------------------------------------------- --
--- ByteSwapped Hex Encoding
-
+--
+-- | ByteSwapped Hex Encoding
+-- Comparision is done lexicographically starting with the most significant bytes.
+--
 newtype ReversedHexEncodedShortByteString = ReversedHexEncodedShortByteString
     { _getReversedHexEncodedShortByteString :: BS.ShortByteString }
-    deriving (Eq, Ord)
+    deriving (Eq)
+
+instance Ord ReversedHexEncodedShortByteString where
+    compare = compare `on` (B.reverse . BS.fromShort . _getReversedHexEncodedShortByteString)
 
 instance IsString ReversedHexEncodedShortByteString where
     fromString a = case reversedShortByteStringFromHex $ T.pack a of
@@ -149,8 +161,8 @@ instance Show ReversedHexEncodedShortByteString where
 
 instance Read ReversedHexEncodedShortByteString where
     readPrec = do
-        str <- readPrec
-        case reversedShortByteStringFromHex (T.pack str) of
+        str <- readPrec @T.Text
+        case reversedShortByteStringFromHex str of
             Right x -> return $ ReversedHexEncodedShortByteString x
             Left err -> fail err
 
@@ -176,6 +188,41 @@ reversedShortByteStringToHex = T.decodeUtf8 . B16.encode . B.reverse . BS.fromSh
 reversedShortByteStringFromHex :: T.Text -> Either String BS.ShortByteString
 reversedShortByteStringFromHex = fmap (BS.toShort . B.reverse) . B16.decode . T.encodeUtf8
 {-# INLINE reversedShortByteStringFromHex #-}
+
+-- -------------------------------------------------------------------------- --
+--
+-- | ByteSwapped Hex Encoding Of Static Length
+--
+-- Comparision is done lexicographically starting with the most significant bytes.
+--
+newtype ReversedHexEncodedShortByteStringN (n :: Nat) = ReversedHexEncodedShortByteStringN
+    { _getReversedHexEncodedShortByteStringN :: ReversedHexEncodedShortByteString }
+    deriving newtype (Eq, Ord, Show, ToJSON)
+
+reversedHexEncodedShortByteStringN
+    :: forall n
+    . KnownNat n
+    => ReversedHexEncodedShortByteString
+    -> Either T.Text (ReversedHexEncodedShortByteStringN n)
+reversedHexEncodedShortByteStringN r@(ReversedHexEncodedShortByteString a)
+    | BS.length a /= nat @n = Left $ "ReversedHexEncodedShortByteStringN has wrong length. Expected " <> sshow @Int (nat @n) <> " got " <> sshow (BS.length a)
+    | otherwise = Right $ ReversedHexEncodedShortByteStringN r
+
+instance KnownNat n => IsString (ReversedHexEncodedShortByteStringN n) where
+    fromString = either (error . T.unpack) id
+        . reversedHexEncodedShortByteStringN
+        . fromString
+
+instance KnownNat n => Read (ReversedHexEncodedShortByteStringN n) where
+    readPrec = do
+        a <- reversedHexEncodedShortByteStringN @n <$> readPrec
+        either (fail . T.unpack) return a
+
+instance KnownNat n => FromJSON (ReversedHexEncodedShortByteStringN n) where
+    parseJSON v = do
+        a <- reversedHexEncodedShortByteStringN @n <$> parseJSON v
+        either (fail . T.unpack) return a
+    {-# INLINE parseJSON #-}
 
 -- -------------------------------------------------------------------------- --
 -- Misc
@@ -204,3 +251,14 @@ le64 = f targetByteOrder
     f LittleEndian = id
     {-# INLINE f #-}
 {-# INLINE le64 #-}
+
+-- | Encode to or from little endian. This is @id@ on little endian platforms.
+--
+le64# :: Word# -> Word#
+le64# = f targetByteOrder
+  where
+    f BigEndian x = byteSwap64# x
+    f LittleEndian x = x
+    {-# INLINE f #-}
+{-# INLINE le64# #-}
+

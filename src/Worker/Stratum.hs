@@ -82,13 +82,10 @@ import qualified System.LogLevel as L
 -- internal modules
 
 import JsonRpc
-
 import Logger
-
+import Target
 import Utils
-
 import Worker
-
 import WorkerUtils
 
 -- -------------------------------------------------------------------------- --
@@ -833,7 +830,11 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
                             -- We've got a valid share
                             --
                             -- TODO: record share in the Pool Context
-                            writeLog jlog L.Info $ "got valid share: nonce2:" <> sshow n2 <> "; nonce: " <> sshow n
+                            writeLog jlog L.Info $ "got valid share"
+                                <> "; nonce2:" <> sshow n2
+                                <> "; nonce: " <> sshow n
+                                <> "; work: " <> sshow finalWork
+                                <> "; target: " <> sshow (_jobTarget job)
 
                             -- Check whether it is a solution for the job and
                             -- only submit if it is. We do this here in order to
@@ -860,6 +861,28 @@ replyError = send
 reply :: AppData -> MiningResponse -> IO ()
 reply = send
 
+-- | TODO: this is a prototype. A pool should measure the rate at
+-- which clients submit shares and should adjust the target accordingly
+--
+updateSessionTarget
+    :: PoolCtx
+    -> SessionState
+    -> Target
+        -- ^ job target
+    -> IO (Maybe Target)
+        -- ^ updated target
+updateSessionTarget poolCtx sessionCtx jobTarget = do
+    curTarget <- readTVarIO $ _sessionTarget sessionCtx
+    if newTarget == curTarget
+        then return Nothing
+        else return (Just newTarget)
+  where
+    -- TODO choose something smarter here:
+    candidate = reduceLevel 2 jobTarget
+
+    -- The final target must be inbetween minTarget and jobTarget
+    newTarget = max minTarget (min jobTarget candidate)
+
 notify :: Logger -> AppData -> SessionState -> Job -> IO ()
 notify logger app sessionCtx job = do
 
@@ -870,28 +893,19 @@ notify logger app sessionCtx job = do
     -- TODO: the pool context should provide guidance what session target
     -- should be used. Something ala
     --
-    -- updateSessionTarget
-    --  :: PoolCtx
-    --  -> SessionCtx
-    --  -> Target
-    --      -- ^ globally configured minimum target
-    --  -> Target
-    --      -- ^ job target
-    --  -> IO (Maybe Target)
-    --      -- ^ updated target
-    --
-    let t =  min minTarget (_jobTarget job)
-
-    writeLog logger L.Info $ "settting session target: " <> sshow t
-    send app $ SetTarget $ T1 t
-    atomically $ writeTVar (_sessionTarget sessionCtx) t
-        -- Note, that there is a small chance of a race here, if the device is really fast
-        -- and returns a solution before this is updated. We could solve that by
-        -- making the target a TMVar or MVar and taking it before we send the
-        -- "mining.set_target".
-        --
-        -- Most likely target changes are minor and shares are accepted even in
-        -- case of a race.
+    updateSessionTarget (error "poolCtx is undefined") sessionCtx (_jobTarget job) >>= \case
+        Just t -> do
+            writeLog logger L.Info $ "setting session target: " <> sshow t
+            send app $ SetTarget $ T1 t
+            atomically $ writeTVar (_sessionTarget sessionCtx) t
+                -- Note, that there is a small chance of a race here, if the device is really fast
+                -- and returns a solution before this is updated. We could solve that by
+                -- making the target a TMVar or MVar and taking it before we send the
+                -- "mining.set_target".
+                --
+                -- Most likely target changes are minor and shares are accepted even in
+                -- case of a race.
+        Nothing -> return ()
 
     writeLog logger L.Info "sending notification"
     send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor

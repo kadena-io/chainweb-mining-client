@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- |
 -- Module: Worker
@@ -39,14 +41,8 @@ module Worker
 import qualified Data.Aeson as A
 import Data.Bytes.Get
 import Data.Bytes.Put
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Short as BS
-import Data.Function
 import Data.Hashable
-import Data.String
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Word
 
 import GHC.Generics
@@ -56,55 +52,7 @@ import Text.Read
 -- internal modules
 
 import Utils
-
--- -------------------------------------------------------------------------- --
--- Hash Target
-
--- | Hash target. A little endian encoded 256 bit (unsigned) word.
---
--- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
---
--- NOTE: in Stratum this value is represented as big endian encoded hexadecimal
--- JSON string.
---
-newtype Target = Target { _targetBytes :: BS.ShortByteString }
-    deriving (Eq, Generic)
-    deriving newtype (Hashable)
-    deriving (IsString, A.ToJSON, A.FromJSON) via ReversedHexEncodedShortByteString
-
--- Arithmetic operations are done, assuming little endian byte order
---
-instance Ord Target where
-    compare = compare `on` (B.reverse . BS.fromShort . _targetBytes)
-
-instance Show Target where
-    show (Target b) = "Target " <> show (ReversedHexEncodedShortByteString b)
-
-instance Read Target where
-    readPrec = do
-        Symbol "Target" <- lexP
-        (ReversedHexEncodedShortByteString b) <- readPrec
-        return (Target b)
-
-decodeTarget :: MonadGet m => m Target
-decodeTarget = Target . BS.toShort <$> getBytes 32
-{-# INLINE decodeTarget #-}
-
-encodeTarget :: MonadPut m => Target -> m ()
-encodeTarget (Target b) = putByteString $ BS.fromShort b
-{-# INLINE encodeTarget #-}
-
--- | Represent target bytes in hexadecimal base
---
-targetToText16 :: Target -> T.Text
-targetToText16 = shortByteStringToHex . _targetBytes
-{-# INLINE targetToText16 #-}
-
--- | Represent target bytes in hexadecimal base in big endian encoding (used by Stratum)
---
-targetToText16Be :: Target -> T.Text
-targetToText16Be = T.decodeUtf8 . B16.encode . B.reverse . BS.fromShort . _targetBytes
-{-# INLINE targetToText16Be #-}
+import Target
 
 -- -------------------------------------------------------------------------- --
 -- Work

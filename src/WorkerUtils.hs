@@ -1,7 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 -- |
 -- Module: WorkerUtils
@@ -26,6 +28,7 @@ module WorkerUtils
 , fastCheckTarget
 , fastCheckTarget_
 , powHash
+
 ) where
 
 import Crypto.Hash
@@ -38,8 +41,10 @@ import qualified Data.Memory.Endian as BA
 import Data.Time.Clock.System
 import Data.Word
 
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (castPtr)
 import Foreign.Storable (peekElemOff, pokeByteOff)
+
+import GHC.Exts
 
 -- internal modules
 
@@ -63,7 +68,7 @@ encodeTimeToWord64 t = BA.unLE . BA.toLE $ unsigned t
 {-# INLINE encodeTimeToWord64 #-}
 
 -- -------------------------------------------------------------------------- --
--- Targets and Nonces
+-- Check Work Headers
 
 -- | `injectNonce` makes low-level assumptions about the byte layout of a
 -- hashed `BlockHeader`. If that layout changes, this functions need to be
@@ -120,6 +125,8 @@ fastCheckTargetN n trgPtr powPtr = compare
 fastCheckTarget :: Target -> Work -> IO Bool
 fastCheckTarget (Target t) w =
     BA.withByteArray (powHash w) $ \ph ->
+        -- TODO: we could safe the memcopy here by reading 4 words
+        -- directly from the short bytestring.
         BS.useAsCStringLen t $ \(pt, _) ->
             fastCheckTarget_ (castPtr pt) (castPtr ph)
 {-# INLINE fastCheckTarget #-}
@@ -127,3 +134,4 @@ fastCheckTarget (Target t) w =
 powHash :: Work -> Digest Blake2s_256
 powHash (Work bytes) = hash (BS.fromShort bytes)
 {-# INLINE powHash #-}
+
