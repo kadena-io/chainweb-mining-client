@@ -32,6 +32,7 @@ module Target
 , getTargetLevel
 , increaseLevel
 , reduceLevel
+, avgTarget
 , nullTarget
 , targetToText16
 , targetToText16Be
@@ -87,6 +88,10 @@ minusLevel :: Int -> Level -> Level
 minusLevel i = plusLevel (-i)
 {-# INLINE minusLevel #-}
 
+avgLevel :: Level -> Level -> Level
+avgLevel (Level a) (Level b) = Level $ (a + b) `div` 2
+{-# INLINE avgLevel #-}
+
 -- -------------------------------------------------------------------------- --
 -- Hash Target
 
@@ -141,6 +146,10 @@ reduceLevel i = target . minusLevel i . getTargetLevel
 increaseLevel :: Int -> Target -> Target
 increaseLevel i = target . plusLevel i . getTargetLevel
 {-# INLINE increaseLevel #-}
+
+avgTarget :: Target -> Target -> Target
+avgTarget a b = target $ avgLevel (getTargetLevel a) (getTargetLevel b)
+{-# INLINE avgTarget #-}
 
 decodeTarget :: MonadGet m => m Target
 decodeTarget = Target . BS.toShort <$> getBytes 32
@@ -221,8 +230,8 @@ targetClz (Target (BS.SBS x))
 --
 targetCompLe :: Target -> Target -> Ordering
 targetCompLe (Target (BS.SBS b1)) (Target (BS.SBS b2))
-    | isTrue# (sizeofByteArray# b1 /=# 32#) = error "Worker.Utils.targetClz: target of invalid size"
-    | isTrue# (sizeofByteArray# b2 /=# 32#) = error "Worker.Utils.targetClz: target of invalid size"
+    | isTrue# (sizeofByteArray# b1 /=# 32#) = error "Worker.Utils.targetCompLe: target of invalid size"
+    | isTrue# (sizeofByteArray# b2 /=# 32#) = error "Worker.Utils.targetCompLe: target of invalid size"
     | otherwise = go1
   where
     go1 | isTrue# (ltWord# (le64# (indexWord64Array# b1 3#)) (le64# (indexWord64Array# b2 3#))) = LT
@@ -234,7 +243,7 @@ targetCompLe (Target (BS.SBS b1)) (Target (BS.SBS b2))
     go3 | isTrue# (ltWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = LT
         | isTrue# (gtWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = GT
         | otherwise = go4
-    go4 | isTrue# (ltWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = LT
-        | isTrue# (gtWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = GT
+    go4 | isTrue# (ltWord# (le64# (indexWord64Array# b1 0#)) (le64# (indexWord64Array# b2 0#))) = LT
+        | isTrue# (gtWord# (le64# (indexWord64Array# b1 0#)) (le64# (indexWord64Array# b2 0#))) = GT
         | otherwise = EQ
 

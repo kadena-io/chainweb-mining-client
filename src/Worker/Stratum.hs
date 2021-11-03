@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
@@ -76,6 +77,7 @@ import qualified Data.Text as T
 
 import qualified Streaming.Prelude as S
 
+import System.Clock
 import System.IO.Unsafe
 import qualified System.LogLevel as L
 import System.Random.MWC
@@ -678,21 +680,6 @@ removeJob ctx jid = atomically $ modifyTVar' (_ctxJobs ctx) $ HM.delete jid
 -- -------------------------------------------------------------------------- --
 -- Sessions
 
--- | ASICs are powerful machines. When connected to a network with low
--- difficulty it may produce a large amount of shares that can overload the
--- network, the stratum server, or the device itself. For that reason we set a
--- minimum target -- even if it means that the client does more work than needed
--- to solve a single block. In the end, producing blocks faster than they can be
--- processed down stream has no benefit and can even be harmful.
---
--- TODO: this should be configurable (possibly also on a per agent base)
---
-maxTarget :: Target
-maxTarget = "0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-
-initialTarget :: Target
-initialTarget = maxTarget
-
 defaultNonce1 :: Nonce1
 defaultNonce1 = Nonce1 2 (Nonce 0xffff)
 
@@ -709,6 +696,7 @@ data SessionState = SessionState
     , _sessionTarget :: !(TVar Target)
     , _authorized :: !(TMVar Username)
     , _subscribed :: !(TMVar Agent)
+    , _sessionLastShare :: !(TVar TimeSpec)
     }
 
 sessionNonce2Size :: SessionState -> NonceSize
@@ -725,21 +713,177 @@ instance Exception AppResult
 
 type RequestStream = S.Stream (S.Of MiningRequest) IO AppResult
 
-writeTMVar :: TMVar a -> a -> STM ()
-writeTMVar var a = tryTakeTMVar var >> putTMVar var a
+send :: A.ToJSON a => AppData -> a -> IO ()
+send app a = appWrite app (BL.toStrict $ A.encode a) >> appWrite app "\n"
+
+replyError :: AppData -> Error -> IO ()
+replyError = send
+
+reply :: AppData -> MiningResponse -> IO ()
+reply = send
+
+targetTimeNs :: Integer
+targetTimeNs = secondsNs 60
+
+notify :: Logger -> AppData -> SessionState -> Job -> IO ()
+notify logger app sessionCtx job = do
+    updateSessionTarget logger app sessionCtx job False
+    writeLog logger L.Info "sending notification"
+    send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
+
+
+-- | TODO: we probably need some protection against clients keeping
+-- connections open without making progress.
+--
+-- * limit size of messages and fail parsing if the limit is exeeced
+-- * add timeout within parsing of a single message
+-- * add timeout for time between messages?
+--
+--
+messages :: SessionState -> AppData -> RequestStream
+messages sessionCtx app = go mempty
+  where
+    nonce2Size = sessionNonce2Size sessionCtx
+
+    go :: B.ByteString -> S.Stream (S.Of MiningRequest) IO AppResult
+    go i = P.parseWith (liftIO (appRead app)) A.json' i >>= \case
+        P.Fail _ path err ->
+            return $ JsonRpcError $ "Failed to parse JSON RPC message: " <> T.pack err <> " " <> sshow path
+        P.Partial _cont ->
+            -- Can this actually happen, or would it a P.Fail?
+            return $ ConnectionClosed "Connection closed unexpectedly"
+        P.Done i' val -> case A.parse (parseMiningRequest nonce2Size) val of
+            A.Error err ->
+                return $ StratumError $ "Unrecognized message: " <> T.pack err <> ". " <> sshow val
+            A.Success result -> do
+                S.yield result
+                go i'
+
+-- -------------------------------------------------------------------------- --
+-- Target Adjustment
+
+-- | ASICs are powerful machines. When connected to a network with low
+-- difficulty it may produce a large amount of shares that can overload the
+-- network, the stratum server, or the device itself. For that reason we set a
+-- minimum target -- even if it means that the client does more work than needed
+-- to solve a single block. In the end, producing blocks faster than they can be
+-- processed down stream has no benefit and can even be harmful.
+--
+-- TODO: this should be configurable (possibly also on a per agent base)
+--
+maxTarget :: Target
+maxTarget = target $ level (48 :: Int)
+
+-- | Start easy, the target will adjust quickly
+--
+initialTarget :: Target
+initialTarget = maxTarget
+
+-- | TODO: this is a prototype. A pool should measure the rate at
+-- which clients submit shares and should adjust the target accordingly
+--
+getNewSessionTarget
+    :: Either TimeSpec TimeSpec
+        -- ^ Left: no share found during the given time span
+        -- Right: share found during the given time span
+    -> Target
+        -- ^ Current session target
+    -> Target
+        -- ^ job target
+    -> Maybe Target
+        -- ^ updated target
+getNewSessionTarget timeSinceLastShare currentTarget jobTarget
+    | newTarget == currentTarget = Nothing
+    | otherwise = Just newTarget
+  where
+    -- TODO do something smarter here
+    candidate = case timeSinceLastShare of
+        Right (toNanoSecs -> t) | t < targetTimeNs ->
+            let adjust = (targetTimeNs `div` t) - 1
+            in increaseLevel (int adjust) currentTarget
+        Left (toNanoSecs -> t) | t > targetTimeNs ->
+            let adjust = (t `div` targetTimeNs)
+            in reduceLevel (int adjust) currentTarget
+        _ -> currentTarget
+
+    -- The final target must be inbetween maxTarget and jobTarget
+    newTarget = max jobTarget (min maxTarget candidate)
+
+-- | Update the session target. Also set the time since the last share.
+--
+updateSessionTarget
+    :: Logger
+    -> AppData
+    -> SessionState
+    -> Job
+    -> Bool
+        -- ^ whether we just found a share
+    -> IO ()
+updateSessionTarget logger app sessionCtx job foundShare = do
+
+    time <- getTime Monotonic
+    timeDiff <- if foundShare
+        then Right . diffTimeSpec time
+            <$> atomically (swapTVar (_sessionLastShare sessionCtx) time)
+        else Left . diffTimeSpec time
+            <$> readTVarIO (_sessionLastShare sessionCtx)
+
+    -- FIXME Find out whether changing target slows down the ASICs
+    --
+    -- TODO: the pool context should provide guidance what session target
+    -- should be used.
+    --
+    currentTarget <- readTVarIO (_sessionTarget sessionCtx)
+    case getNewSessionTarget timeDiff currentTarget (_jobTarget job) of
+        Just t -> do
+            writeLog logger L.Info $ "setting session target"
+                <> "; " <> prettyTarget "new" t
+                <> "; " <> prettyTarget "old" currentTarget
+                <> "; " <> prettyTarget "job" (_jobTarget job)
+                <> "; timediff: " <> sshow timeDiff
+            send app $ SetTarget $ T1 t
+            atomically $ writeTVar (_sessionTarget sessionCtx) t
+                -- Note, that there is a small chance of a race here, if the device is really fast
+                -- and returns a solution before this is updated. We could solve that by
+                -- making the target a TMVar or MVar and taking it before we send the
+                -- "mining.set_target".
+                --
+                -- Most likely target changes are minor and shares are accepted even in
+                -- case of a race.
+
+        Nothing -> do
+            t <- readTVarIO $ _sessionTarget sessionCtx
+            writeLog logger L.Info $ "session target unchanged"
+                <> "; " <> prettyTarget "cur" t
+                <> "; " <> prettyTarget "job" (_jobTarget job)
+  where
+    prettyTarget :: T.Text -> Target -> T.Text
+    prettyTarget l t = l <> " " <> sshow t <> "[" <> sshow (getTargetLevel t) <> "]"
+
+-- -------------------------------------------------------------------------- --
+-- Run a Session
 
 session :: Logger -> StratumServerCtx -> AppData -> IO ()
 session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow (appSockAddr app)) $ \logger ->
     flip finally (appCloseConnection app) $ do
         sessionCtx <- initSessionState
+        writeLog logger L.Info $ "new session"
+            <> ". sessionNonce: " <> sshow (_sessionNonce sessionCtx)
+            <> "; sessionNonce1 " <> sshow (_sessionNonce1 sessionCtx)
 
         -- Run Request Stream and Job Stream
         r <- race (processRequests logger sessionCtx) $ do
             awaitSubscribe sessionCtx
 
-            -- send initial target
+            -- initial target
+            now <- getTime Monotonic
+            atomically $ writeTVar (_sessionLastShare sessionCtx) now
             curJob <- liftIO $ readTVarIO (_ctxCurrentJob ctx)
-            updateSessionTarget logger app sessionCtx curJob
+            let jt = _jobTarget curJob
+            let t = max jt (min maxTarget (avgTarget maxTarget jt))
+            writeLog logger L.Info $ "setting initial session target: " <> sshow t
+            send app $ SetTarget $ T1 t
+
             S.mapM_ (notify logger app sessionCtx) jobStream
 
         case r of
@@ -793,6 +937,7 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
             <$> newTVarIO initialTarget
             <*> newEmptyTMVarIO
             <*> newEmptyTMVarIO
+            <*> (getTime Monotonic >>= newTVarIO)
 
     processRequests :: Logger -> SessionState -> IO AppResult
     processRequests logger sessionCtx = S.mapM_ (handleRequest logger sessionCtx) (messages sessionCtx app)
@@ -835,7 +980,7 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
                         -- Invalid Share:
                         False -> do
-                            writeLog jlog L.Warn "got invalid nonce"
+                            writeLog jlog L.Warn "reject invalid nonce"
                             writeLog jlog L.Info $ "invalid nonce"
                                 <> "; nonce2:" <> sshow n2
                                 <> "; nonce: " <> sshow n
@@ -856,6 +1001,8 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
                                 <> "; work: " <> sshow finalWork
                                 <> "; target: " <> sshow (_jobTarget job)
 
+                            updateSessionTarget logger app sessionCtx job True
+
                             -- Check whether it is a solution for the job and
                             -- only submit if it is. We do this here in order to
                             -- fail early and avoid contention on the job result
@@ -871,98 +1018,6 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
                                     -- Commit final result to job
                                     void $ tryPutMVar (_jobResult job) n
                                     reply app $ SubmitResponse mid (Right True)
-
-send :: A.ToJSON a => AppData -> a -> IO ()
-send app a = appWrite app (BL.toStrict $ A.encode a) >> appWrite app "\n"
-
-replyError :: AppData -> Error -> IO ()
-replyError = send
-
-reply :: AppData -> MiningResponse -> IO ()
-reply = send
-
--- | TODO: this is a prototype. A pool should measure the rate at
--- which clients submit shares and should adjust the target accordingly
---
-getNewSessionTarget
-    :: SessionState
-    -> Target
-        -- ^ job target
-    -> IO (Maybe Target)
-        -- ^ updated target
-getNewSessionTarget sessionCtx jobTarget = do
-    curTarget <- readTVarIO $ _sessionTarget sessionCtx
-    if newTarget == curTarget
-        then return Nothing
-        else return (Just newTarget)
-  where
-    -- TODO choose something smarter here:
-    candidate = reduceLevel 4 jobTarget
-
-    -- The final target must be inbetween maxTarget and jobTarget
-    newTarget = min maxTarget (max jobTarget candidate)
-
-updateSessionTarget :: Logger -> AppData -> SessionState -> Job -> IO ()
-updateSessionTarget logger app sessionCtx job = do
-
-    -- FIXME Find out whether changing target slows down the ASICs
-    --
-    -- TODO: the pool context should provide guidance what session target
-    -- should be used.
-    --
-    getNewSessionTarget sessionCtx (_jobTarget job) >>= \case
-        Just t -> do
-            writeLog logger L.Info $ "setting session target: " <> sshow t
-            send app $ SetTarget $ T1 t
-            atomically $ writeTVar (_sessionTarget sessionCtx) t
-                -- Note, that there is a small chance of a race here, if the device is really fast
-                -- and returns a solution before this is updated. We could solve that by
-                -- making the target a TMVar or MVar and taking it before we send the
-                -- "mining.set_target".
-                --
-                -- Most likely target changes are minor and shares are accepted even in
-                -- case of a race.
-        Nothing -> do
-            t <- readTVarIO $ _sessionTarget sessionCtx
-            writeLog logger L.Info $ "session target unchanged: " <> sshow t
-                <> ", level: " <> sshow (getTargetLevel t)
-            writeLog logger L.Info $ "job target: " <> sshow (_jobTarget job)
-                <> ", level: " <> sshow (getTargetLevel (_jobTarget job))
-            return ()
-
-notify :: Logger -> AppData -> SessionState -> Job -> IO ()
-notify logger app sessionCtx job = do
-    updateSessionTarget logger app sessionCtx job
-    writeLog logger L.Info "sending notification"
-    send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
-
-
--- | TODO: we probably need some protection against clients keeping
--- connections open without making progress.
---
--- * limit size of messages and fail parsing if the limit is exeeced
--- * add timeout within parsing of a single message
--- * add timeout for time between messages?
---
---
-messages :: SessionState -> AppData -> RequestStream
-messages sessionCtx app = go mempty
-  where
-    nonce2Size = sessionNonce2Size sessionCtx
-
-    go :: B.ByteString -> S.Stream (S.Of MiningRequest) IO AppResult
-    go i = P.parseWith (liftIO (appRead app)) A.json' i >>= \case
-        P.Fail _ path err ->
-            return $ JsonRpcError $ "Failed to parse JSON RPC message: " <> T.pack err <> " " <> sshow path
-        P.Partial _cont ->
-            -- Can this actually happen, or would it a P.Fail?
-            return $ ConnectionClosed "Connection closed unexpectedly"
-        P.Done i' val -> case A.parse (parseMiningRequest nonce2Size) val of
-            A.Error err ->
-                return $ StratumError $ "Unrecognized message: " <> T.pack err <> ". " <> sshow val
-            A.Success result -> do
-                S.yield result
-                go i'
 
 -- -------------------------------------------------------------------------- --
 -- Stratum Server

@@ -119,8 +119,10 @@ instance A.FromJSON a => A.FromJSON (T1 a) where
 -- -------------------------------------------------------------------------- --
 -- | JSON RPC Message Id
 --
--- This is an integral number that is used to match result message to requests
--- within a JSON RPC session.
+-- This is used to match result message to requests within a JSON RPC session.
+--
+-- It usually is an integral number, the can be encoded either as a string or
+-- a number.
 --
 newtype MsgId = MsgId A.Value
     deriving (Show, Eq, Ord)

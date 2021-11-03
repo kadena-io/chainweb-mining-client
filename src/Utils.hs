@@ -8,6 +8,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -45,7 +46,12 @@ module Utils
 , quoted
 , le64
 , le64#
+, seconds
+, secondsNs
+, writeTMVar
 ) where
+
+import Control.Concurrent.STM
 
 import Data.Aeson
 import Data.Aeson.Encoding hiding (int)
@@ -66,6 +72,8 @@ import Data.Word
 import GHC.ByteOrder
 import GHC.Exts
 import GHC.TypeNats
+
+import System.Clock
 
 import Text.Read
 
@@ -261,4 +269,16 @@ le64# = f targetByteOrder
     f LittleEndian x = x
     {-# INLINE f #-}
 {-# INLINE le64# #-}
+
+seconds :: Integer -> TimeSpec
+seconds i = fromNanoSecs $ i * 1_000_000_000
+{-# INLINE seconds #-}
+
+secondsNs :: Integer -> Integer
+secondsNs i = i * 1_000_000_000
+{-# INLINE secondsNs #-}
+
+writeTMVar :: TMVar a -> a -> STM ()
+writeTMVar var a = tryTakeTMVar var >> putTMVar var a
+{-# INLINE writeTMVar #-}
 
