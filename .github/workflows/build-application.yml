@@ -70,7 +70,8 @@ jobs:
       run: |
         echo "ARTIFACTS_ARCHIVE: $ARTIFACTS_ARCHIVE"
         mkdir -p $ARTIFACTS_DIR
-        cp $(cabal list-bin chainweb-mining-client) $ARTIFACTS_DIR
+        # cp $(cabal list-bin chainweb-mining-client) $ARTIFACTS_DIR -- cf. https://github.com/haskell/cabal/pull/7791
+        cp dist-newstyle/build/*/ghc-*/chainweb-mining-client-*/build/chainweb-mining-client/chainweb-mining-client $ARTIFACTS_DIR
         cp README.md $ARTIFACTS_DIR
         cp CHANGELOG.md $ARTIFACTS_DIR
         cp LICENSE $ARTIFACTS_DIR
