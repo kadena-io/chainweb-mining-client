@@ -25,10 +25,9 @@ module WorkerUtils
 , injectNonce_
 
 -- * Check Target
+, checkTarget
 , fastCheckTarget
-, fastCheckTarget_
 , powHash
-
 ) where
 
 import Crypto.Hash
@@ -42,14 +41,17 @@ import Data.Time.Clock.System
 import Data.Word
 
 import Foreign.Ptr (castPtr)
-import Foreign.Storable (peekElemOff, pokeByteOff)
+import Foreign.Storable (peek, peekElemOff, pokeByteOff)
 
 import GHC.Exts
 
 -- internal modules
 
-import Worker
+import Target
+
 import Utils
+
+import Worker
 
 -- -------------------------------------------------------------------------- --
 -- Block Creation Time
@@ -92,44 +94,37 @@ injectNonce n (Work bytes) = BS.useAsCStringLen bytes $ \(ptr, l) -> do
 -- little endian encoding, hence we compare against the target from the end of
 -- the bytes first, then move toward the front 8 bytes at a time.
 --
-fastCheckTarget_ :: Ptr Word64 -> Ptr Word64 -> IO Bool
-fastCheckTarget_ !trgPtr !powPtr =
-    fastCheckTargetN 3 trgPtr powPtr >>= \case
+fastCheckTarget :: TargetWords -> Ptr Word64 -> IO Bool
+fastCheckTarget !(TargetWords a b c d) !powPtr =
+    checkTargetWordOff d 3 powPtr >>= \case
         LT -> return False
         GT -> return True
-        EQ -> fastCheckTargetN 2 trgPtr powPtr >>= \case
+        EQ -> checkTargetWordOff c 2 powPtr >>= \case
             LT -> return False
             GT -> return True
-            EQ -> fastCheckTargetN 1 trgPtr powPtr >>= \case
+            EQ -> checkTargetWordOff b 1 powPtr >>= \case
                 LT -> return False
                 GT -> return True
-                EQ -> fastCheckTargetN 0 trgPtr powPtr >>= \case
+                EQ -> checkTargetWordOff a 0 powPtr >>= \case
                     LT -> return False
                     GT -> return True
                     EQ -> return True
-{-# INLINE fastCheckTarget_ #-}
-
--- | Recall that `peekElemOff` acts like `drop` for the size of the type in
--- question. Here, this is `Word64`. Since our hash is treated as a `Word256`,
--- each @n@ knocks off a `Word64`'s worth of bytes, and there would be 4 such
--- sections (64 * 4 = 256).
---
--- This must never be called for @n >= 4@.
---
-fastCheckTargetN :: Int -> Ptr Word64 -> Ptr Word64 -> IO Ordering
-fastCheckTargetN n trgPtr powPtr = compare
-    <$> peekElemOff trgPtr n
-    <*> peekElemOff powPtr n
-{-# INLINE fastCheckTargetN #-}
-
-fastCheckTarget :: Target -> Work -> IO Bool
-fastCheckTarget (Target t) w =
-    BA.withByteArray (powHash w) $ \ph ->
-        -- TODO: we could safe the memcopy here by reading 4 words
-        -- directly from the short bytestring.
-        BS.useAsCStringLen t $ \(pt, _) ->
-            fastCheckTarget_ (castPtr pt) (castPtr ph)
 {-# INLINE fastCheckTarget #-}
+
+checkTargetWordOff :: Word64 -> Int -> Ptr Word64 -> IO Ordering
+checkTargetWordOff !w !n !powPtr = compare w <$> peekElemOff powPtr n
+{-# INLINE checkTargetWordOff #-}
+
+checkTarget :: Target -> Work -> IO Bool
+checkTarget t w = do
+    t' <- BA.withByteArray (powHash w) $ \ptr ->
+        fmap targetFromWords $ TargetWords
+            <$> peek ptr
+            <*> peek ptr
+            <*> peek ptr
+            <*> peek ptr
+    return $ t <= t'
+{-# INLINE checkTarget #-}
 
 powHash :: Work -> Digest Blake2s_256
 powHash (Work bytes) = hash (BS.fromShort bytes)

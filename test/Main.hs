@@ -18,7 +18,12 @@ module Main
 import Test.QuickCheck
 
 import Test.Syd
+
+-- internal modules
+
 import qualified Test.Target
+import qualified Test.Utils
+import qualified Test.WorkerUtils
 
 -- -------------------------------------------------------------------------- --
 -- Main
@@ -30,6 +35,8 @@ tests :: Spec
 tests = do
     -- describe "Test.WorkerUtils" Test.WorkerUtils.tests
     describe "Test.Target" Test.Target.tests
+    describe "Test.Utils" Test.Utils.tests
+    describe "Test.WorkerUtils" Test.WorkerUtils.tests
 
 -- -- -------------------------------------------------------------------------- --
 -- -- ByteSwap

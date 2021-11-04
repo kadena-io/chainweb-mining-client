@@ -78,7 +78,7 @@ externalWorker logger cmd _nonce target (Work work) =
     withLogTag logger "Worker" $ \workerLogger ->
         P.withCreateProcess workerProc (go workerLogger)
   where
-    targetArg = T.unpack $ targetToText16 target
+    targetArg = T.unpack $ targetToText16Le target
 
     workerProc = (P.shell $ cmd <> " " <> targetArg)
         { P.std_in = P.CreatePipe

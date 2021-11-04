@@ -19,12 +19,18 @@ module Test.Target
 ( tests
 ) where
 
+import Control.Monad
+
 import qualified Data.Aeson as A
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Short as BS
+import Data.Char
 import Data.Either
 import Data.Function
+import Data.String
+import qualified Data.Text as T
+import Data.Word
 
 import Test.QuickCheck
 import Test.Syd
@@ -35,27 +41,15 @@ import Text.Read
 
 import Target
 
--- -------------------------------------------------------------------------- --
--- Generic Utilities
+import TestUtils
 
-prop_show_read :: Eq a => Show a => Read a => Arbitrary a => a -> Property
-prop_show_read a = read (show a) === a
-
-prop_json_encode_decode
-    :: Eq a
-    => Show a
-    => Arbitrary a
-    => A.ToJSON a
-    => A.FromJSON a
-    => a
-    -> Property
-prop_json_encode_decode a = A.decode (A.encode a) === Just a
+import Utils
 
 -- -------------------------------------------------------------------------- --
 -- Utils
 
 instance Arbitrary Target where
-    arbitrary = Target . BS.pack <$> vector 32
+    arbitrary = Target . fromIntegral <$> chooseInteger (0, 2^256-1)
 
 newtype TargetBit = TargetBit Int
     deriving (Show, Eq, Ord)
@@ -63,65 +57,36 @@ newtype TargetBit = TargetBit Int
 instance Arbitrary TargetBit where
     arbitrary = TargetBit <$> chooseInt (0, 255)
 
-slowTargetSet :: Int -> Target
-slowTargetSet n = Target . BS.pack . reverse
-    $ replicate x 0x00
-    <> [shiftR 0xff y]
-    <> replicate (31 - x) 0xff
-  where
-    (x, y) = n `quotRem` 8
+instance Arbitrary Level where
+    arbitrary = level <$> choose @Int (0, 255)
 
-slowTargetClz :: Target -> Int
-slowTargetClz = B.foldr f 0 . B.reverse . BS.fromShort . _targetBytes
-  where
-    f (countLeadingZeros -> 8) r = 8 + r
-    f (countLeadingZeros -> x) _ = x
+nibbleClz :: Char -> Int
+nibbleClz = (\x -> x - 4) . countLeadingZeros . int @_ @Word8 . digitToInt
+
+hexClz :: T.Text -> Int
+hexClz hexStr = case T.uncons <$> T.break (/= '0') hexStr of
+    (a, Nothing) -> T.length a * 4
+    (a, Just (b, _)) -> T.length a * 4 + nibbleClz b
 
 -- -------------------------------------------------------------------------- --
 -- Tests
 
 tests :: Spec
 tests = describe "Target tests" $ do
-    prop "prop_targetCompLe" prop_targetCompLe
-    prop "prop_targetClz" prop_targetClz
-    prop "prop_targetSet" prop_targetSet
-    prop "prop_targetSet_size" prop_targetSet_size
-    prop "prop_targetSet_targetClz" prop_targetSet_targetClz
     prop "prop_json_encode_decode @Target" (prop_json_encode_decode @Target)
     prop "prop_show_read @Target" (prop_show_read @Target)
+
+    prop "prop_targetWords" prop_targetWords
+    prop "prop_fromString" prop_fromString
+    prop "prop_targetLevel" prop_targetLevel
+    prop "prop_getTargetLevel" prop_targetLevel
 
     prop_read_empty
     prop_read_wrong_size
     prop_read_size
 
-    testTests
-
-testTests :: Spec
-testTests = describe "Target Test tests" $ do
-    prop "prop_slowTargetSet_size" prop_slowTargetSet_size
-    prop "prop_slowTargetSet_slowTargetClz" prop_slowTargetSet_slowTargetClz
-
 -- -------------------------------------------------------------------------- --
 -- Properties
-
-prop_targetCompLe :: Target -> Target -> Property
-prop_targetCompLe t0 t1 = targetCompLe t0 t1 === slowComp t0 t1
-  where
-    slowComp = compare `on` (B.reverse . BS.fromShort . _targetBytes)
-
-prop_targetClz :: Target -> Property
-prop_targetClz t = targetClz t === slowTargetClz t
-
-prop_targetSet_size :: TargetBit -> Property
-prop_targetSet_size (TargetBit b) = BS.length bytes === 32
-  where
-    Target bytes = targetSet (b + 1)
-
-prop_targetSet :: TargetBit -> Property
-prop_targetSet (TargetBit b) = targetSet (b + 1) === slowTargetSet (b + 1)
-
-prop_targetSet_targetClz :: TargetBit -> Property
-prop_targetSet_targetClz (TargetBit b) = targetClz (targetSet (b + 1)) === b + 1
 
 prop_read_empty :: Spec
 prop_read_empty = describe "target from empty string fails" $
@@ -129,7 +94,7 @@ prop_read_empty = describe "target from empty string fails" $
 
 prop_read_wrong_size :: Spec
 prop_read_wrong_size = describe "read target of wrong size fails" $ do
-    flip mapM_ ([0..31] <> [33..40]) $ \s ->
+    forM_ ([0..31] <> [33..40]) $ \s ->
         prop "read string of wrong size failes"
             $ fmap (isLeft . readEither @Target . targetString)
             $ vectorOf (s * 2)
@@ -144,14 +109,26 @@ prop_read_size = prop "read string of correct size succeeds"
 targetString :: String -> String
 targetString s = "Target \"" <> s <> "\""
 
+prop_targetWords :: Target -> Property
+prop_targetWords t = targetFromWords (targetToWords t) === t
+
+prop_fromString :: Target -> Property
+prop_fromString t = (fromString $ T.unpack $ targetToText16Be t) === t
+
 -- -------------------------------------------------------------------------- --
--- Test Properties
+-- Level Stuff
 
-prop_slowTargetSet_size :: TargetBit -> Property
-prop_slowTargetSet_size (TargetBit b) = BS.length bytes === 32
+prop_targetLevel :: Level -> Property
+prop_targetLevel l =
+    level lzc === l
+    .&&.
+    T.all (== 'f') r === True
   where
-    Target bytes = slowTargetSet (b + 1)
+    (lzc, r) = case T.uncons <$> T.break (/= '0') str of
+        (a, Nothing) -> (T.length a * 4, r)
+        (a, Just (b, c)) -> (T.length a * 4 + nibbleClz b , c)
 
-prop_slowTargetSet_slowTargetClz :: TargetBit -> Property
-prop_slowTargetSet_slowTargetClz (TargetBit b) = slowTargetClz (slowTargetSet (b + 1)) === b + 1
+    str = targetToText16Be (mkTargetLevel l)
 
+prop_getTargetLevel :: Target -> Property
+prop_getTargetLevel t = getTargetLevel t === level (hexClz (targetToText16Be t))

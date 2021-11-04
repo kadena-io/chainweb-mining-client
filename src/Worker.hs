@@ -23,7 +23,7 @@ module Worker
   Target(..)
 , encodeTarget
 , decodeTarget
-, targetToText16
+, targetToText16Le
 , targetToText16Be
 
 -- * Mining Work

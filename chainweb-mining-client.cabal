@@ -121,4 +121,8 @@ test-suite tests
         , stm >=2.5
         , sydtest >=0.4
         , text >=1.2
+        , quickcheck-instances >=0.3
+        , memory >=0.15
+        , cryptonite >=0.27
+        , time >=1.9
 

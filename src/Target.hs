@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UnboxedTuples #-}
@@ -22,45 +23,50 @@
 --
 module Target
 (
--- * Difficulty Level
-  Level
-, level
-
 -- * Target
-, Target(..)
-, target
+  Target(..)
+, mkTarget
+, nullTarget
+, avgTarget
+
+-- * Target Words
+, TargetWords(..)
+, targetToWords
+, targetFromWords
+
+-- * Binary Encodings
+, encodeTarget
+, decodeTarget
+
+-- * Textual Encodings
+, targetToText16Le
+, targetToText16Be
+
+-- * Difficulty Level
+, Level
+, level
+, mkTargetLevel
 , getTargetLevel
 , increaseLevel
 , reduceLevel
-, avgTarget
-, nullTarget
-, targetToText16
-, targetToText16Be
-, encodeTarget
-, decodeTarget
-, targetCompLe
-, targetClz
-, targetSet
 ) where
 
-import Control.Monad.ST
-
 import qualified Data.Aeson as A
+import qualified Data.Aeson.Encoding as A
+import Data.Bits
 import Data.Bytes.Get
 import Data.Bytes.Put
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Short as BS
-import qualified Data.ByteString.Short.Internal as BS
-import Data.Coerce
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy as LB
 import Data.Hashable
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Read as T
+import Data.Word
 
-import GHC.Exts
 import GHC.Generics
-import GHC.ST
+import Numeric.Natural
 
 import Text.Read
 
@@ -69,10 +75,188 @@ import Text.Read
 import Utils
 
 -- -------------------------------------------------------------------------- --
--- Difficulty Level
+-- Target
+
+-- | Hash target. A little endian encoded 256 bit (unsigned) word.
+--
+-- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
+--
+-- This is encoded as a positive integer with that it is smaller than 2^256
+--
+-- Binary encoding in a block header is fixed size 256 little endian format
+-- (padded with zero bits).
+--
+-- Textual endcoding in JSON and debugging and log messages is fixed size 64
+-- hexadecimal (padded with zeros).
+--
+-- All arithmetic is done is infinite precision rational arithmetic with
+-- the final result capped at 2^256-1.
+--
+newtype Target = Target Natural
+    deriving (Generic)
+    deriving newtype (Eq, Ord, Enum, Hashable)
+
+instance Bounded Target where
+    minBound = Target 0
+    maxBound = Target (2^256-1)
+
+mkTarget :: MonadFail m => Integral a => a -> m Target
+mkTarget a
+    | a < 0 = fail "newTarget: target can not be smaller than zero"
+    | a >= 2^(256 :: Int) = fail "newTarget: target can not be larger than 2^256-1"
+    | otherwise = return $ Target $ int a
+
+nullTarget :: Target
+nullTarget = minBound
+
+maxTarget :: Target
+maxTarget = maxBound
+
+avgTarget :: Target -> Target -> Target
+avgTarget (Target a) (Target b) = Target $ (a + b) `div` 2
+{-# INLINE avgTarget #-}
+
+-- -------------------------------------------------------------------------- --
+-- Representation as Word
+
+-- Little Endian ordered. The words themself are in host byte ordering.
+--
+data TargetWords = TargetWords
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+
+-- TODO on 64 bit platform we could use mkNatural instead
+--
+targetFromWords :: TargetWords -> Target
+targetFromWords (TargetWords a b c d) = Target $
+    ((int d * 0x10000000000000000 + int c) * 0x10000000000000000 + int b) * 0x10000000000000000 + int a
+{-# INLINE targetFromWords #-}
+
+-- TODO with GHC-9 and ghc-bignum we could switch the type of Target to
+-- use BigNat on 64 bit systems.
+--
+targetToWords :: Target -> TargetWords
+targetToWords (Target i0) = TargetWords (int a) (int b) (int c) (int d)
+  where
+    (i1, a) = i0 `quotRem` 0x10000000000000000
+    (i2, b) = i1 `quotRem` 0x10000000000000000
+    (d, c) = i2 `quotRem` 0x10000000000000000
+{-# INLINE targetToWords #-}
+
+-- -------------------------------------------------------------------------- --
+-- Binary Encodings
+
+decodeTarget :: MonadGet m => m Target
+decodeTarget = fmap targetFromWords $
+    TargetWords
+        <$> getWord64le
+        <*> getWord64le
+        <*> getWord64le
+        <*> getWord64le
+{-# INLINE decodeTarget #-}
+
+encodeTarget :: MonadPut m => Target -> m ()
+encodeTarget t = do
+    putWord64le a
+    putWord64le b
+    putWord64le c
+    putWord64le d
+  where
+    TargetWords a b c d = targetToWords t
+{-# INLINE encodeTarget #-}
+
+-- -------------------------------------------------------------------------- --
+-- Textual Encodings
+
+targetBuilderHexBe :: Target -> BB.Builder
+targetBuilderHexBe t
+    = BB.word64HexFixed d
+    <> BB.word64HexFixed c
+    <> BB.word64HexFixed b
+    <> BB.word64HexFixed a
+  where
+    TargetWords a b c d = targetToWords t
+{-# INLINE targetBuilderHexBe #-}
+
+targetBuilderHexLe :: Target -> BB.Builder
+targetBuilderHexLe t
+    = BB.word64HexFixed a
+    <> BB.word64HexFixed b
+    <> BB.word64HexFixed c
+    <> BB.word64HexFixed d
+  where
+    TargetWords a b c d = targetToWords t
+{-# INLINE targetBuilderHexLe #-}
+
+instance Show Target where
+    show t = "Target " <> show (targetToText16Be t)
+    {-# INLINE show #-}
+
+instance Read Target where
+    readPrec = do
+        Ident "Target" <- lexP
+        readPrec >>= targetFromText16Be
+
+instance IsString Target where
+    fromString s = case targetFromText16Be (T.pack s) of
+        Just x -> x
+        Nothing -> error "Target.IsString.fromString: failed to parse target"
+    {-# INLINE fromString #-}
+
+instance A.ToJSON Target where
+    toEncoding = A.unsafeToEncoding . quoted . targetBuilderHexBe
+    toJSON = A.toJSON . targetToText16Be
+    {-# INLINE toEncoding #-}
+    {-# INLINE toJSON #-}
+
+instance A.FromJSON Target where
+    parseJSON = A.withText "Target" targetFromText16Be
+    {-# INLINE parseJSON #-}
+
+targetFromText16Be :: MonadFail m => T.Text -> m Target
+targetFromText16Be t
+    | T.length t /= 64 =
+        fail $ "Target string has wrong length. Expected 64 ," <> " got " <> sshow (T.length t)
+    | otherwise = case T.hexadecimal t of
+        Right (n, "") -> mkTarget @_ @Natural n
+        Right (n, x) -> fail $ "failed to parse target: pending characters after reading " <> show n <> ": " <> T.unpack x
+        Left e -> fail $ "failed to parse target: " <> e
+{-# INLINE targetFromText16Be #-}
+
+-- | Represent target bytes in hexadecimal base in little endian byte order
+--
+targetToText16Le :: Target -> T.Text
+targetToText16Le = T.decodeUtf8 . LB.toStrict . BB.toLazyByteString . targetBuilderHexLe
+{-# INLINE targetToText16Le #-}
+
+-- | Represent target bytes in hexadecimal base in big endian byte order (used by Stratum)
+--
+targetToText16Be :: Target -> T.Text
+targetToText16Be = T.decodeUtf8 . LB.toStrict . BB.toLazyByteString . targetBuilderHexBe
+{-# INLINE targetToText16Be #-}
+
+-- -------------------------------------------------------------------------- --
+-- Difficulty
+
+-- TODO: is double fine here, or should we use Ratio?
+--
+newtype Difficulty = Difficulty Double
+    deriving (Show)
+    deriving newtype (Eq, Ord)
+
+-- targetDifficulty :: Target -> Difficulty
+-- targetDifficulty (Target t) = m / t
+--   where
+--     Target m = maxTarget
+
+
+-- -------------------------------------------------------------------------- --
+-- Difficulty Levels (leading zeros)
 
 newtype Level = Level Int
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
 level :: Show a => Integral a => a -> Level
 level i
@@ -80,170 +264,18 @@ level i
     | otherwise = Level (int i)
 {-# INLINE level #-}
 
-plusLevel :: Int -> Level -> Level
-plusLevel i (Level l) = level (max 0 (min 255 (i + l)))
-{-# INLINE plusLevel #-}
-
-minusLevel :: Int -> Level -> Level
-minusLevel i = plusLevel (-i)
-{-# INLINE minusLevel #-}
-
-avgLevel :: Level -> Level -> Level
-avgLevel (Level a) (Level b) = Level $ (a + b) `div` 2
-{-# INLINE avgLevel #-}
-
--- -------------------------------------------------------------------------- --
--- Hash Target
-
--- | Hash target. A little endian encoded 256 bit (unsigned) word.
---
--- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
---
--- NOTE: In serveral places throughout the codebase it is assumed that this
--- has exactly 32 bytes!
---
--- NOTE: in Stratum this value is represented as big endian encoded hexadecimal
--- JSON string.
---
--- TODO: some operations might be faster if we would stored this in
--- big-endian.
---
-newtype Target = Target { _targetBytes :: BS.ShortByteString }
-    deriving (Eq, Generic)
-    deriving newtype (Hashable)
-    deriving (IsString, A.ToJSON, A.FromJSON) via (ReversedHexEncodedShortByteStringN 32)
-
--- Arithmetic operations are done, assuming little endian byte order
---
-instance Ord Target where
-    compare = targetCompLe
-
-instance Show Target where
-    show (Target b) = "Target " <> show (ReversedHexEncodedShortByteString b)
-
-instance Read Target where
-    readPrec = do
-        Ident "Target" <- lexP
-        b <- readPrec @(ReversedHexEncodedShortByteStringN 32)
-        return (Target $ coerce b)
-
-nullTarget :: Target
-nullTarget = targetSet 256
-{-# INLINE nullTarget #-}
-
-target :: Level -> Target
-target (Level i) = targetSet i
-{-# INLINE target #-}
+mkTargetLevel :: Level -> Target
+mkTargetLevel (Level i) = Target $ 2^(256-i) - 1
 
 getTargetLevel :: Target -> Level
-getTargetLevel t = Level $ targetClz t
+getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 (2 * i)
 {-# INLINE getTargetLevel #-}
 
 reduceLevel :: Int -> Target -> Target
-reduceLevel i = target . minusLevel i . getTargetLevel
+reduceLevel i (Target t) = Target $ shiftL t i
 {-# INLINE reduceLevel #-}
 
 increaseLevel :: Int -> Target -> Target
-increaseLevel i = target . plusLevel i . getTargetLevel
+increaseLevel i (Target t) = Target $ shiftR t i
 {-# INLINE increaseLevel #-}
-
-avgTarget :: Target -> Target -> Target
-avgTarget a b = target $ avgLevel (getTargetLevel a) (getTargetLevel b)
-{-# INLINE avgTarget #-}
-
-decodeTarget :: MonadGet m => m Target
-decodeTarget = Target . BS.toShort <$> getBytes 32
-{-# INLINE decodeTarget #-}
-
-encodeTarget :: MonadPut m => Target -> m ()
-encodeTarget (Target b) = putByteString $ BS.fromShort b
-{-# INLINE encodeTarget #-}
-
--- | Represent target bytes in hexadecimal base
---
-targetToText16 :: Target -> T.Text
-targetToText16 = shortByteStringToHex . _targetBytes
-{-# INLINE targetToText16 #-}
-
--- | Represent target bytes in hexadecimal base in big endian encoding (used by Stratum)
---
-targetToText16Be :: Target -> T.Text
-targetToText16Be = T.decodeUtf8 . B16.encode . B.reverse . BS.fromShort . _targetBytes
-{-# INLINE targetToText16Be #-}
-
--- -------------------------------------------------------------------------- --
--- Efficient Manipulation of Targets
---
-
--- All of the following assumes a 64bit system
-
--- | Create Target that has the given number of most significant
--- bits set to zero.
---
--- TODO: it may be faster to work with 4 Word64 values. It depends on
--- how fast setByteArray# is compared to writeWord64ByteArray#
---
-targetSet :: Int -> Target
-targetSet i@(I# z)
-    | i < 1 && i > 256 = error "WorkerUtils.setTarget: illegal number of target bits."
-    | otherwise = Target $ runST $ ST $ \s0 ->
-        case newByteArray# 32# s0 of
-            (# s1, b #) -> case set0 s1 b of
-                s2 -> case set8 s2 b of
-                    s3 -> case set1 s3 b of
-                        s4 -> case unsafeFreezeByteArray# b s4 of
-                            (# s5, a #) -> (# s5, BS.SBS a #)
-  where
-    -- Set clear all 256 bits
-    set0 s b = setByteArray# b 0# 32# 0x00# s
-
-    -- Set leading bc bytes
-    set8 s b = setByteArray# b 0# c8 0xff# s
-
-    -- Set leading bits of last byte
-    set1 s b = if isTrue# (c8 <# 32#) then writeWord8Array# b c8 b1 s else s
-
-    !o = 256# -# z
-    !(# !c8, !c1 #) = quotRemInt# o 8#
-    !b1 = shiftRL# 0xff## (8# -# c1)
-
--- | Count leading zeros of a target in little endian encoding.
---
--- It is an error if the input target does not contain exactly 32 bytes.
---
-targetClz :: Target -> Int
-targetClz (Target (BS.SBS x))
-    | isTrue# (sizeofByteArray# x /=# 32#) = error "Worker.Utils.targetClz: target of invalid size"
-    | otherwise = I# (go1 0#)
-  where
-    go1 a = let b = a +# word2Int# (clz64# (le64# (indexWord64Array# x 3#)))
-        in if isTrue# (b <# 64#) then b else go2 b
-    go2 a = let b = a +# word2Int# (clz64# (le64# (indexWord64Array# x 2#)))
-        in if isTrue# (b <# 128#) then b else go3 b
-    go3 a = let b = a +# word2Int# (clz64# (le64# (indexWord64Array# x 1#)))
-        in if isTrue# (b <# 192#) then b else go4 b
-    go4 a = a +# word2Int# (clz64# (le64# (indexWord64Array# x 0#)))
-
--- | Little endian comparision of two targets
---
--- It is an error if any of the input target does not contain exactly 32 bytes.
---
-targetCompLe :: Target -> Target -> Ordering
-targetCompLe (Target (BS.SBS b1)) (Target (BS.SBS b2))
-    | isTrue# (sizeofByteArray# b1 /=# 32#) = error "Worker.Utils.targetCompLe: target of invalid size"
-    | isTrue# (sizeofByteArray# b2 /=# 32#) = error "Worker.Utils.targetCompLe: target of invalid size"
-    | otherwise = go1
-  where
-    go1 | isTrue# (ltWord# (le64# (indexWord64Array# b1 3#)) (le64# (indexWord64Array# b2 3#))) = LT
-        | isTrue# (gtWord# (le64# (indexWord64Array# b1 3#)) (le64# (indexWord64Array# b2 3#))) = GT
-        | otherwise = go2
-    go2 | isTrue# (ltWord# (le64# (indexWord64Array# b1 2#)) (le64# (indexWord64Array# b2 2#))) = LT
-        | isTrue# (gtWord# (le64# (indexWord64Array# b1 2#)) (le64# (indexWord64Array# b2 2#))) = GT
-        | otherwise = go3
-    go3 | isTrue# (ltWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = LT
-        | isTrue# (gtWord# (le64# (indexWord64Array# b1 1#)) (le64# (indexWord64Array# b2 1#))) = GT
-        | otherwise = go4
-    go4 | isTrue# (ltWord# (le64# (indexWord64Array# b1 0#)) (le64# (indexWord64Array# b2 0#))) = LT
-        | isTrue# (gtWord# (le64# (indexWord64Array# b1 0#)) (le64# (indexWord64Array# b2 0#))) = GT
-        | otherwise = EQ
 

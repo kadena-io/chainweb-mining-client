@@ -553,7 +553,7 @@ data Job = Job
     }
 
 noopJob :: Job
-noopJob = unsafePerformIO $ Job (JobId (-1)) (Target "") (Work "") <$> newEmptyMVar
+noopJob = unsafePerformIO $ Job (JobId (-1)) nullTarget (Work "") <$> newEmptyMVar
 {-# NOINLINE noopJob #-}
 
 -- | Stratum Server Context
@@ -642,7 +642,7 @@ submitWork ctx l _nonce trg work =  withLogTag l "Stratum Worker" $ \logger -> d
         checkJob logger job = do
             nonce <- takeMVar (_jobResult job) -- at this point the mvar is available again
             !w <- injectNonce nonce (_jobWork job)
-            fastCheckTarget (_jobTarget job) w >>= \case
+            checkTarget (_jobTarget job) w >>= \case
                 True -> do
                     writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
                     return w
@@ -772,12 +772,15 @@ messages sessionCtx app = go mempty
 -- TODO: this should be configurable (possibly also on a per agent base)
 --
 maxTarget :: Target
-maxTarget = target $ level (48 :: Int)
+maxTarget = mkTargetLevel $ level (40 :: Int)
 
 -- | Start easy, the target will adjust quickly
 --
 initialTarget :: Target
 initialTarget = maxTarget
+
+useJobTarget :: Bool
+useJobTarget = True
 
 -- | TODO: this is a prototype. A pool should measure the rate at
 -- which clients submit shares and should adjust the target accordingly
@@ -793,6 +796,7 @@ getNewSessionTarget
     -> Maybe Target
         -- ^ updated target
 getNewSessionTarget timeSinceLastShare currentTarget jobTarget
+    | useJobTarget = Just jobTarget
     | newTarget == currentTarget = Nothing
     | otherwise = Just newTarget
   where
@@ -882,6 +886,7 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
             let jt = _jobTarget curJob
             let t = max jt (min maxTarget (avgTarget maxTarget jt))
             writeLog logger L.Info $ "setting initial session target: " <> sshow t
+            atomically $ writeTVar (_sessionTarget sessionCtx) t
             send app $ SetTarget $ T1 t
 
             S.mapM_ (notify logger app sessionCtx) jobStream
@@ -976,7 +981,7 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
                     -- Check if share is valid (matches share target)
                     finalWork <- injectNonce n (_jobWork job)
                     st <- readTVarIO (_sessionTarget sessionCtx)
-                    fastCheckTarget st finalWork >>= \case
+                    checkTarget st finalWork >>= \case
 
                         -- Invalid Share:
                         False -> do
@@ -1010,7 +1015,7 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
                             -- TODO we could save a few CPU cycles by reusing the hash
                             -- from the previous check
-                            fastCheckTarget (_jobTarget job) finalWork >>= \case
+                            checkTarget (_jobTarget job) finalWork >>= \case
                                 False -> reply app $ SubmitResponse mid (Right True)
                                 True -> do
                                     writeLog jlog L.Info $ "solved block: nonce2:" <> sshow n2 <> "; nonce: " <> sshow n

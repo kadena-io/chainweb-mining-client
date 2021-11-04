@@ -28,7 +28,6 @@ module Worker.Simulation
 import Control.Concurrent (threadDelay)
 
 import Data.Aeson
-import qualified Data.ByteString.Short as BS
 import Data.Hashable
 import qualified Data.Text as T
 
@@ -62,7 +61,7 @@ defaultHashRate = 1_000_000
 -- the work bytes unchanged after that time has passed.
 --
 simulationWorker :: Logger -> MWC.GenIO -> HashRate -> Worker
-simulationWorker logger rng rate _nonce (Target targetBytes) work = do
+simulationWorker logger rng rate _nonce (Target targetNat) work = do
     delay <- round <$> MWC.exponential scale rng
     logg Info $ "solve time (microseconds): " <> T.pack (show delay)
     threadDelay delay
@@ -81,5 +80,5 @@ simulationWorker logger rng rate _nonce (Target targetBytes) work = do
 
     -- Target is an little endian encoded (unsigned) 256 bit word.
     targetNum :: Rational
-    targetNum = foldr (\b a -> fromIntegral b + 256 * a) 0 $ BS.unpack targetBytes
+    targetNum = fromIntegral targetNat
 

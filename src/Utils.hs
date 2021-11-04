@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -46,9 +47,14 @@ module Utils
 , quoted
 , le64
 , le64#
+, peekWord64OffLe
 , seconds
 , secondsNs
 , writeTMVar
+, naturalLog2
+
+-- * Internal
+, naturalLog2_compat
 ) where
 
 import Control.Concurrent.STM
@@ -73,9 +79,22 @@ import GHC.ByteOrder
 import GHC.Exts
 import GHC.TypeNats
 
+import Foreign.Storable
+
 import System.Clock
 
 import Text.Read
+
+-- -------------------------------------------------------------------------- --
+-- Base Compatibility
+
+#if MIN_VERSION_base(4,15,0)
+import GHC.Num.Natural
+import GHC.Num.Integer
+#else
+import GHC.Float
+import Numeric.Natural
+#endif
 
 -- -------------------------------------------------------------------------- --
 --
@@ -270,6 +289,12 @@ le64# = f targetByteOrder
     {-# INLINE f #-}
 {-# INLINE le64# #-}
 
+-- | the Position is indexed in bytes
+--
+peekWord64OffLe :: Ptr Word64 -> Int -> IO Word64
+peekWord64OffLe ptr i = le64 <$> peekByteOff ptr i
+{-# INLINE peekWord64OffLe #-}
+
 seconds :: Integer -> TimeSpec
 seconds i = fromNanoSecs $ i * 1_000_000_000
 {-# INLINE seconds #-}
@@ -281,4 +306,20 @@ secondsNs i = i * 1_000_000_000
 writeTMVar :: TMVar a -> a -> STM ()
 writeTMVar var a = tryTakeTMVar var >> putTMVar var a
 {-# INLINE writeTMVar #-}
+
+-- -------------------------------------------------------------------------- --
+-- BigNum Compatibility
+
+-- | @naturalLog2@ is only available starting with GHC-9 via the ghc-bignum package.
+--
+naturalLog2_compat :: Natural -> Word
+naturalLog2_compat = int . integerLogBase 2 . int
+{-# INLINE naturalLog2_compat #-}
+
+#if !MIN_VERSION_base(4,15,0)
+naturalLog2 :: Natural -> Word
+naturalLog2 = naturalLog2_compat
+{-# INLINE naturalLog2 #-}
+#endif
+
 
