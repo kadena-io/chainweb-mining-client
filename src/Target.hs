@@ -240,17 +240,73 @@ targetToText16Be = T.decodeUtf8 . LB.toStrict . BB.toLazyByteString . targetBuil
 -- -------------------------------------------------------------------------- --
 -- Difficulty
 
--- TODO: is double fine here, or should we use Ratio?
+-- | Difficulty measures the expected number of random Bernoulli trials for
+-- solving a block, i.e. the number of nonce that a miner must try in order to
+-- find a hash that matches are target. Conversely, the inverse of the
+-- difficulty is the probabily that a nonce, that haven't been tried before,
+-- results in a valid solution.
+--
+-- For pools, it measures the weight of a share within a round.
+--
+-- The minimum possible difficulty is 1. The maximum difficulty is 2^256, which
+-- corresponds to a target value of 0.
+--
+-- Since Difficulty and target are related, the notion of difficuylty is
+-- redundant. However, compared to the notion of target it is a more intuitive
+-- representation of the work of a miner. Also, since it is represented as
+-- double it is often more convenient to work with when perfect precision isn't
+-- required.
 --
 newtype Difficulty = Difficulty Double
     deriving (Show)
     deriving newtype (Eq, Ord)
 
--- targetDifficulty :: Target -> Difficulty
--- targetDifficulty (Target t) = m / t
---   where
---     Target m = maxTarget
+pruneDifficulty :: Double -> Difficulty
+pruneDifficulty d = Difficulty $ min m (max 1 d)
+  where
+    m = 2^(256 :: Int)
 
+targetToDifficulty :: Target -> Difficulty
+targetToDifficulty (Target t) = Difficulty $ m / int (t + 1)
+  where
+    m = 2^(256 :: Int)
+
+difficultyToTarget :: Difficulty -> Target
+difficultyToTarget (Difficulty d) = Target $ round ((m / d) - 1)
+  where
+    m = 2^(256 :: Int)
+
+-- | Time per share. Usually this is used scaled to some larger number
+-- of shares to account for the exponential distribution with which shares
+-- arrive.
+--
+-- This is measured in seconds
+--
+newtype Period = Period Double
+    deriving (Show, Eq, Ord)
+
+-- | The period values must have the same denominator. (If not they must be
+-- scaled.)
+--
+addjustDifficulty
+    :: Double
+        -- ^ dead band, tolerance for which not adjustement is performed
+        -- in order to reduce jitter
+    -> Period
+        -- ^ current period
+    -> Period
+        -- ^ targeted period
+    -> Difficulty
+        -- ^ current difficulty
+    -> Difficulty
+        -- ^ new difficulty
+addjustDifficulty tolerance curP trgP curD
+    | abs (cp - tp) / tp <= tolerance = curD
+    | otherwise = pruneDifficulty $ d * cp / tp
+    where
+        Difficulty d = curD
+        Period cp = curP
+        Period tp = curP
 
 -- -------------------------------------------------------------------------- --
 -- Difficulty Levels (leading zeros)
