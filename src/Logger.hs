@@ -215,15 +215,17 @@ withLogger !level inner = do
   where
     -- TODO: implement batch processing
     --
-    backend queue sizeRef = forever $ do
-        -- No need for masking here. If anything throws in here we exit the
-        -- application anyways.
-        --
-        -- TODO: there is no way to check if Chan is empty. Use a different
-        -- queue that allows to check that sizeRef and the Queue are
-        -- approximately in sync.
-        --
-        msg <- readChan queue
-        decrementCounter sizeRef
-        T.putStrLn $ formatLogMessage msg
+    backend queue sizeRef = do
+        hSetBuffering stdout NoBuffering
+        forever $ do
+            -- No need for masking here. If anything throws in here we exit the
+            -- application anyways.
+            --
+            -- TODO: there is no way to check if Chan is empty. Use a different
+            -- queue that allows to check that sizeRef and the Queue are
+            -- approximately in sync.
+            --
+            msg <- readChan queue
+            decrementCounter sizeRef
+            T.putStrLn $ formatLogMessage msg
 
