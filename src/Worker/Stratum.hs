@@ -980,7 +980,14 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
                     -- Check if share is valid (matches share target)
                     finalWork <- injectNonce n (_jobWork job)
-                    st <- readTVarIO (_sessionTarget sessionCtx)
+
+                    -- we make sure that we never reject shares that solved a block!
+                    -- (this add a little bit of skew to the share computation but everybody
+                    -- benefits from it. The actual problem is that we don't associate
+                    -- shares-works with their respective targets at notification in first place.
+                    -- Also, this mostly affects solo miners that use sessions targets that
+                    -- are, or a close to, the job targets.)
+                    st <- max (_jobTarget job) <$> readTVarIO (_sessionTarget sessionCtx)
                     checkTarget st finalWork >>= \case
 
                         -- Invalid Share:
