@@ -1,1 +1,6 @@
-result
+dist-newstyle
+hls.log
+.ghc.environment*
+.ghci_history
+.ghci
+.DS_Store

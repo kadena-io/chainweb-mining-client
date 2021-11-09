@@ -5,12 +5,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
@@ -40,7 +42,6 @@ import Control.Retry
 import Crypto.Hash.Algorithms (Blake2s_256)
 import qualified Crypto.PubKey.Ed25519 as C
 
-import Data.Bifunctor
 import qualified Data.ByteArray.Encoding as BA
 import Data.Bytes.Get
 import Data.Bytes.Put
@@ -50,7 +51,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
 import qualified Data.HashMap.Strict as HM
-import Data.String
+import Data.Streaming.Network
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Word
@@ -81,34 +82,14 @@ import Text.Read (Read(..), readListPrecDefault)
 
 -- internal modules
 
+import Utils
 import Logger
 import Worker
 import Worker.CPU
 import Worker.External
 import Worker.Simulation
 import qualified Worker.Stratum as Stratum
-
--- -------------------------------------------------------------------------- --
--- Orphans
-
-instance ToJSON HostAddress where
-    toJSON = toJSON . hostAddressToText
-    {-# INLINE toJSON #-}
-
-instance FromJSON HostAddress where
-    parseJSON = withText "HostAddress"
-        $ either (fail . show) return . hostAddressFromText
-    {-# INLINE parseJSON #-}
-
--- -------------------------------------------------------------------------- --
---  Utils
-
-textReader :: (T.Text -> Either SomeException a) -> ReadM a
-textReader p = eitherReader $ first show . p . T.pack
-
-sshow :: Show a => IsString b => a -> b
-sshow = fromString . show
-{-# INLINE sshow #-}
+import qualified Worker.Stratum.Server as Stratum
 
 -- -------------------------------------------------------------------------- --
 -- Integral Unit Prefixes
@@ -241,7 +222,7 @@ workerConfigFromText t = case T.toCaseFold t of
     "external" -> return ExternalWorker
     "simulation" -> return SimulationWorker
     "stratum" -> return StratumWorker
-    _ -> error $ "unknown worker configuraton: " <> T.unpack t
+    _ -> throwM $ FromTextException $ "unknown worker configuraton: " <> t
 
 -- -------------------------------------------------------------------------- --
 -- Configuration
@@ -261,6 +242,9 @@ data Config = Config
     , _configLogLevel :: !LogLevel
     , _configWorker :: !WorkerConfig
     , _configExternalWorkerCommand :: !String
+    , _configStratumPort :: !Port
+    , _configStratumInterface :: !HostPreference
+    , _configStratumDifficulty :: !Stratum.StratumDifficulty
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -278,6 +262,9 @@ defaultConfig = Config
     , _configLogLevel = Info
     , _configWorker = StratumWorker
     , _configExternalWorkerCommand = "echo 'no external worker command configured' && /bin/false"
+    , _configStratumPort = 1917
+    , _configStratumInterface = "*"
+    , _configStratumDifficulty = Stratum.WorkDifficulty
     }
 
 instance ToJSON Config where
@@ -292,6 +279,9 @@ instance ToJSON Config where
         , "logLevel" .= logLevelToText @T.Text (_configLogLevel c)
         , "worker" .= _configWorker c
         , "externalWorkerCommand" .= _configExternalWorkerCommand c
+        , "stratumPort" .= _configStratumPort c
+        , "stratumInterface" .= _configStratumInterface c
+        , "stratumDifficulty" .= _configStratumDifficulty c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -306,6 +296,9 @@ instance FromJSON (Config -> Config) where
         <*< setProperty configLogLevel "logLevel" parseLogLevel o
         <*< configWorker ..: "worker" % o
         <*< configExternalWorkerCommand ..: "externalWorkerCommand" % o
+        <*< configStratumPort ..: "stratumPort" % o
+        <*< configStratumInterface ..: "stratumInterface" % o
+        <*< configStratumDifficulty ..: "stratumDifficulty" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -352,6 +345,15 @@ parseConfig = id
     <*< configExternalWorkerCommand .:: option (textReader $ Right . T.unpack)
         % long "external-worker-cmd"
         <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
+    <*< configStratumPort .:: option jsonReader
+      % long "stratum-port"
+      <> help "the port on which the stratum server listens"
+    <*< configStratumInterface .:: option jsonReader
+      % long "stratum-interface"
+      <> help "network interface that the stratum server binds to"
+    <*< configStratumDifficulty .:: option (textReader Stratum.stratumDifficultyFromText)
+      % long "stratum-difficulty"
+      <> help "How the difficulty for stratum mining shares is choosen. Possible values are \"block\" for using the block target of the most most recent notification of new work, or number between 0 and 256 for specifiying a fixed difficulty as logarithm of base 2 (number of leading zeros)."
 
 -- -------------------------------------------------------------------------- --
 -- HTTP Retry Logic
@@ -792,5 +794,10 @@ run conf logger = do
             f $ \l -> simulationWorker l rng workerRate
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256
-        StratumWorker -> Stratum.withStratumServer logger $ \ctx -> f (Stratum.submitWork ctx)
+        StratumWorker -> Stratum.withStratumServer
+          logger
+          (_configStratumPort conf)
+          (_configStratumInterface conf)
+          (_configStratumDifficulty conf)
+          (f . Stratum.submitWork)
 

@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -27,6 +28,7 @@ module Target
   Target(..)
 , mkTarget
 , nullTarget
+, maxTarget
 , avgTarget
 
 -- * Target Words
@@ -42,14 +44,25 @@ module Target
 , targetToText16Le
 , targetToText16Be
 
--- * Difficulty Level
+-- * Difficulty
+, Period(..)
+, HashRate(..)
+, Difficulty(..)
+, targetToDifficulty
+, difficultyToTarget
+, adjustDifficulty
+
+-- * Difficulty Level (leading zeros)
 , Level
 , level
 , mkTargetLevel
 , getTargetLevel
 , increaseLevel
 , reduceLevel
+, leveled
 ) where
+
+import Control.Monad
 
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Encoding as A
@@ -66,6 +79,7 @@ import qualified Data.Text.Read as T
 import Data.Word
 
 import GHC.Generics
+
 import Numeric.Natural
 
 import Text.Read
@@ -98,12 +112,12 @@ newtype Target = Target Natural
 
 instance Bounded Target where
     minBound = Target 0
-    maxBound = Target (2^256-1)
+    maxBound = Target (2 ^ (256::Int) - 1)
 
 mkTarget :: MonadFail m => Integral a => a -> m Target
 mkTarget a
     | a < 0 = fail "newTarget: target can not be smaller than zero"
-    | a >= 2^(256 :: Int) = fail "newTarget: target can not be larger than 2^256-1"
+    | a >= 2 ^ (256 :: Int) = fail "newTarget: target can not be larger than 2^256-1"
     | otherwise = return $ Target $ int a
 
 nullTarget :: Target
@@ -272,7 +286,8 @@ targetToDifficulty (Target t) = Difficulty $ m / int (t + 1)
     m = 2^(256 :: Int)
 
 difficultyToTarget :: Difficulty -> Target
-difficultyToTarget (Difficulty d) = Target $ round ((m / d) - 1)
+-- difficultyToTarget (Difficulty d) = Target $ floor (m / d) - 1
+difficultyToTarget (Difficulty d) = Target $ floor (m / d) - 1
   where
     m = 2^(256 :: Int)
 
@@ -285,28 +300,32 @@ difficultyToTarget (Difficulty d) = Target $ round ((m / d) - 1)
 newtype Period = Period Double
     deriving (Show, Eq, Ord)
 
+newtype HashRate = HashRate Double
+    deriving (Show, Eq, Ord)
+
 -- | The period values must have the same denominator. (If not they must be
 -- scaled.)
 --
-addjustDifficulty
+adjustDifficulty
     :: Double
         -- ^ dead band, tolerance for which not adjustement is performed
         -- in order to reduce jitter
-    -> Period
-        -- ^ current period
+    -> HashRate
+        -- ^ estimated hash rate
     -> Period
         -- ^ targeted period
     -> Difficulty
         -- ^ current difficulty
     -> Difficulty
         -- ^ new difficulty
-addjustDifficulty tolerance curP trgP curD
+adjustDifficulty tolerance estimatedHashRate trgP curD
     | abs (cp - tp) / tp <= tolerance = curD
-    | otherwise = pruneDifficulty $ d * cp / tp
+    | otherwise = pruneDifficulty $ d * tp / cp
     where
         Difficulty d = curD
-        Period cp = curP
-        Period tp = curP
+        HashRate hr = estimatedHashRate
+        Period tp = trgP
+        cp = d / hr
 
 -- -------------------------------------------------------------------------- --
 -- Difficulty Levels (leading zeros)
@@ -316,15 +335,26 @@ newtype Level = Level Int
 
 level :: Show a => Integral a => a -> Level
 level i
-    | i < 0 || i > 255 = error $ "Invalid difficulty level. Expected [0,31]; got " <> show i
+    | i < 0 || i > 256 = error $ "Invalid difficulty level. Expected [0,256]; got " <> show i
     | otherwise = Level (int i)
 {-# INLINE level #-}
+
+instance A.ToJSON Level where
+    toJSON (Level i) = A.toJSON i
+    {-# INLINE toJSON #-}
+
+instance A.FromJSON Level where
+    parseJSON = A.parseJSON >=> \i -> if
+        | i < 0 || i > 256 -> fail $ "Invalid difficulty level. Expected an integral value between 0 and 256; got " <> show i
+        | otherwise -> return $ Level i
+    {-# INLINE parseJSON #-}
 
 mkTargetLevel :: Level -> Target
 mkTargetLevel (Level i) = Target $ 2^(256-i) - 1
 
 getTargetLevel :: Target -> Level
-getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 (2 * i)
+-- getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 (i + 1)
+getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 i - 1
 {-# INLINE getTargetLevel #-}
 
 reduceLevel :: Int -> Target -> Target
@@ -335,3 +365,6 @@ increaseLevel :: Int -> Target -> Target
 increaseLevel i (Target t) = Target $ shiftR t i
 {-# INLINE increaseLevel #-}
 
+leveled :: Target -> Target
+leveled = mkTargetLevel . getTargetLevel
+{-# INLINE leveled #-}

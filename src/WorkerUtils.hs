@@ -28,6 +28,7 @@ module WorkerUtils
 , checkTarget
 , fastCheckTarget
 , powHash
+, powHashToTargetWords
 ) where
 
 import Crypto.Hash
@@ -41,7 +42,7 @@ import Data.Time.Clock.System
 import Data.Word
 
 import Foreign.Ptr (castPtr)
-import Foreign.Storable (peek, peekElemOff, pokeByteOff)
+import Foreign.Storable (peekElemOff, pokeByteOff)
 
 import GHC.Exts
 
@@ -95,7 +96,7 @@ injectNonce n (Work bytes) = BS.useAsCStringLen bytes $ \(ptr, l) -> do
 -- the bytes first, then move toward the front 8 bytes at a time.
 --
 fastCheckTarget :: TargetWords -> Ptr Word64 -> IO Bool
-fastCheckTarget !(TargetWords a b c d) !powPtr =
+fastCheckTarget (TargetWords a b c d) !powPtr =
     checkTargetWordOff d 3 powPtr >>= \case
         LT -> return False
         GT -> return True
@@ -117,14 +118,17 @@ checkTargetWordOff !w !n !powPtr = compare w <$> peekElemOff powPtr n
 
 checkTarget :: Target -> Work -> IO Bool
 checkTarget t w = do
-    t' <- BA.withByteArray (powHash w) $ \ptr ->
-        fmap targetFromWords $ TargetWords
-            <$> peek ptr
-            <*> peek ptr
-            <*> peek ptr
-            <*> peek ptr
-    return $ t <= t'
+    t' <- powHashToTargetWords (powHash w)
+    return $ targetFromWords t' <= t
 {-# INLINE checkTarget #-}
+
+powHashToTargetWords :: Digest Blake2s_256 -> IO TargetWords
+powHashToTargetWords h = BA.withByteArray h $ \ptr -> TargetWords
+    <$> peekWord64OffLe ptr 0
+    <*> peekWord64OffLe ptr 8
+    <*> peekWord64OffLe ptr 16
+    <*> peekWord64OffLe ptr 24
+{-# INLINE powHashToTargetWords #-}
 
 powHash :: Work -> Digest Blake2s_256
 powHash (Work bytes) = hash (BS.fromShort bytes)

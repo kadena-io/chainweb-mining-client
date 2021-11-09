@@ -33,7 +33,6 @@ main = sydTest tests
 
 tests :: Spec
 tests = do
-    -- describe "Test.WorkerUtils" Test.WorkerUtils.tests
     describe "Test.Target" Test.Target.tests
     describe "Test.Utils" Test.Utils.tests
     describe "Test.WorkerUtils" Test.WorkerUtils.tests

@@ -21,13 +21,9 @@ module Test.Target
 
 import Control.Monad
 
-import qualified Data.Aeson as A
 import Data.Bits
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Short as BS
 import Data.Char
 import Data.Either
-import Data.Function
 import Data.String
 import qualified Data.Text as T
 import Data.Word
@@ -79,7 +75,9 @@ tests = describe "Target tests" $ do
     prop "prop_targetWords" prop_targetWords
     prop "prop_fromString" prop_fromString
     prop "prop_targetLevel" prop_targetLevel
-    prop "prop_getTargetLevel" prop_targetLevel
+    prop "prop_getTargetLevel" prop_getTargetLevel
+    prop "prop_level_difficulty" prop_level_difficulty
+    test_level_difficulty
 
     prop_read_empty
     prop_read_wrong_size
@@ -132,3 +130,14 @@ prop_targetLevel l =
 
 prop_getTargetLevel :: Target -> Property
 prop_getTargetLevel t = getTargetLevel t === level (hexClz (targetToText16Be t))
+
+prop_level_difficulty :: Level -> Property
+prop_level_difficulty l = f l === l
+  where
+    f = getTargetLevel . difficultyToTarget . targetToDifficulty . mkTargetLevel
+
+test_level_difficulty :: Spec
+test_level_difficulty = describe "level is the log2 of difficulty" $
+    mapM_ (\x -> it (show x) $ f x `shouldBe` x) $ level <$> [0..256]
+  where
+    f = getTargetLevel . difficultyToTarget . targetToDifficulty . mkTargetLevel

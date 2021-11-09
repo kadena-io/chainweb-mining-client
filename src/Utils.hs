@@ -9,11 +9,14 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- |
 -- Module: Utils
@@ -40,6 +43,10 @@ module Utils
 -- * Byte Swapped Hex-Encoded Short ByteStrings of Static Length
 , ReversedHexEncodedShortByteStringN(..)
 
+-- * Exceptions
+
+, FromTextException(..)
+
 -- * Misc
 , nat
 , int
@@ -52,15 +59,20 @@ module Utils
 , secondsNs
 , writeTMVar
 , naturalLog2
+, textReader
 
 -- * Internal
 , naturalLog2_compat
 ) where
 
-import Control.Concurrent.STM
+import Configuration.Utils hiding (Error)
 
-import Data.Aeson
+import Control.Concurrent.STM
+import Control.Monad
+import Control.Monad.Catch
+
 import Data.Aeson.Encoding hiding (int)
+import Data.Bifunctor
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Builder as BB
@@ -78,6 +90,11 @@ import Data.Word
 import GHC.ByteOrder
 import GHC.Exts
 import GHC.TypeNats
+
+import Data.Streaming.Network
+import qualified Data.Streaming.Network.Internal as NI
+
+import Network.HostAddress
 
 import Foreign.Storable
 
@@ -138,8 +155,8 @@ instance Show HexEncodedShortByteString where
 
 instance Read HexEncodedShortByteString where
     readPrec = do
-        str <- readPrec
-        case shortByteStringFromHex (T.pack str) of
+        s <- readPrec
+        case shortByteStringFromHex (T.pack s) of
             Right x -> return $ HexEncodedShortByteString x
             Left err -> fail err
 
@@ -188,8 +205,8 @@ instance Show ReversedHexEncodedShortByteString where
 
 instance Read ReversedHexEncodedShortByteString where
     readPrec = do
-        str <- readPrec @T.Text
-        case reversedShortByteStringFromHex str of
+        s <- readPrec @T.Text
+        case reversedShortByteStringFromHex s of
             Right x -> return $ ReversedHexEncodedShortByteString x
             Left err -> fail err
 
@@ -252,13 +269,25 @@ instance KnownNat n => FromJSON (ReversedHexEncodedShortByteStringN n) where
     {-# INLINE parseJSON #-}
 
 -- -------------------------------------------------------------------------- --
+-- Exceptions
+
+newtype FromTextException = FromTextException T.Text
+    deriving (Eq, Show, Ord)
+
+instance Exception FromTextException
+
+-- -------------------------------------------------------------------------- --
 -- Misc
+
+textReader :: (T.Text -> Either SomeException a) -> ReadM a
+textReader p = eitherReader $ first show . p . T.pack
+{-# INLINE textReader #-}
 
 int :: Integral a => Num b => a -> b
 int = fromIntegral
 {-# INLINE int #-}
 
-sshow :: Show a => IsString s => a -> s
+sshow :: Show a => IsString b => a -> b
 sshow = fromString . show
 {-# INLINE sshow #-}
 
@@ -268,6 +297,7 @@ quoted b = "\"" <> b <> "\""
 
 nat :: forall (n :: Nat) a . KnownNat n => Integral a => a
 nat = int $ natVal' (proxy# :: Proxy# n)
+{-# INLINE nat #-}
 
 -- | Encode to or from little endian. This is @id@ on little endian platforms.
 --
@@ -322,4 +352,52 @@ naturalLog2 = naturalLog2_compat
 {-# INLINE naturalLog2 #-}
 #endif
 
+-- -------------------------------------------------------------------------- --
+-- HostAddress Orphans
+
+instance ToJSON HostAddress where
+    toJSON = toJSON . hostAddressToText
+    {-# INLINE toJSON #-}
+
+instance FromJSON HostAddress where
+    parseJSON = withText "HostAddress"
+        $ either (fail . show) return . hostAddressFromText
+    {-# INLINE parseJSON #-}
+
+instance ToJSON Port where
+  toJSON = toJSON . int @_ @Int
+
+instance FromJSON Port where
+  parseJSON = parseJSON @Int >=> \x -> if
+    | 0 <= x && x <= int (maxBound @Word16) -> return $ int x
+    | otherwise -> fail $ "invalid port number: " <> sshow x
+
+-- -------------------------------------------------------------------------- --
+--  Host Preference
+
+hostPreferenceToText :: HostPreference -> T.Text
+hostPreferenceToText NI.HostAny = "*"
+hostPreferenceToText NI.HostIPv4 = "*4"
+hostPreferenceToText NI.HostIPv4Only = "!4"
+hostPreferenceToText NI.HostIPv6 = "*6"
+hostPreferenceToText NI.HostIPv6Only = "!6"
+hostPreferenceToText (NI.Host s) = T.pack s
+
+hostPreferenceFromText :: MonadThrow m => T.Text -> m HostPreference
+hostPreferenceFromText "*" = return NI.HostAny
+hostPreferenceFromText "*4" = return NI.HostIPv4
+hostPreferenceFromText "!4" = return NI.HostIPv4Only
+hostPreferenceFromText "*6" = return NI.HostIPv6
+hostPreferenceFromText "!6" = return NI.HostIPv6Only
+hostPreferenceFromText s = NI.Host . T.unpack . hostnameToText <$> hostnameFromText s
+
+instance ToJSON HostPreference where
+    toJSON = toJSON . hostPreferenceToText
+    {-# INLINE toJSON #-}
+
+instance FromJSON HostPreference where
+    parseJSON = withText "HostPreference" $ \t -> case hostPreferenceFromText t of
+        Left e -> fail $ show e
+        Right h -> return h
+    {-# INLINE parseJSON #-}
 
