@@ -86,6 +86,7 @@ import Worker
 import Worker.CPU
 import Worker.External
 import Worker.Simulation
+import qualified Worker.Stratum as Stratum
 
 -- -------------------------------------------------------------------------- --
 -- Orphans
@@ -215,6 +216,7 @@ data WorkerConfig
     = CpuWorker
     | ExternalWorker
     | SimulationWorker
+    | StratumWorker
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (Hashable)
 
@@ -231,12 +233,14 @@ workerConfigToText :: WorkerConfig -> T.Text
 workerConfigToText CpuWorker = "cpu"
 workerConfigToText ExternalWorker = "external"
 workerConfigToText SimulationWorker = "simulation"
+workerConfigToText StratumWorker = "stratum"
 
 workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
 workerConfigFromText t = case T.toCaseFold t of
     "cpu" -> return CpuWorker
     "external" -> return ExternalWorker
     "simulation" -> return SimulationWorker
+    "stratum" -> return StratumWorker
     _ -> error $ "unknown worker configuraton: " <> T.unpack t
 
 -- -------------------------------------------------------------------------- --
@@ -272,7 +276,7 @@ defaultConfig = Config
     , _configThreadCount = 10
     , _configGenerateKey = False
     , _configLogLevel = Info
-    , _configWorker = CpuWorker
+    , _configWorker = StratumWorker
     , _configExternalWorkerCommand = "echo 'no external worker command configured' && /bin/false"
     }
 
@@ -344,7 +348,7 @@ parseConfig = id
         % short 'w'
         <> long "worker"
         <> help "The type of mining worker that is used"
-        <> metavar "cpu|external|simulation"
+        <> metavar "cpu|external|simulation|stratum"
     <*< configExternalWorkerCommand .:: option (textReader $ Right . T.unpack)
         % long "external-worker-cmd"
         <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
@@ -483,7 +487,7 @@ getNodeVersion conf mgr = do
 getJob :: Config -> ChainwebVersion -> HTTP.Manager -> IO (ChainId, Target, Work)
 getJob conf ver mgr = do
     bytes <- HTTP.httpLbs req mgr
-    case runGetS decodeJob (BL.toStrict $ HTTP.responseBody $ bytes) of
+    case runGetS decodeJob (BL.toStrict $ HTTP.responseBody bytes) of
         Left e -> error $ "failed to decode work: " <> sshow e
         Right (a,b,c) -> return (a, b, c)
   where
@@ -513,14 +517,13 @@ postSolved conf ver logger mgr (Work bytes) = retryHttp logger $ do
   where
     logg = writeLog logger
     req = (baseReq conf ver "mining/solved")
-        { HTTP.requestBody = HTTP.RequestBodyBS $ BS.fromShort $ bytes
+        { HTTP.requestBody = HTTP.RequestBodyBS $ BS.fromShort bytes
         , HTTP.method = "POST"
         }
 
 -- | Automatically restarts the stream when the response status is 2** and throws
 -- and exception otherwise.
 --
--- No
 -- No retry is used. Retrying is handled by the outer logic.
 --
 updateStream
@@ -772,17 +775,22 @@ run conf logger = do
             -- For private mining that is done asynchronously. Public mining is
             -- considered deprecated.
     ver <- getNodeVersion conf mgr
-    rng <- MWC.createSystemRandom
     updateMap <- newUpdateMap
-    forConcurrently_ [0 .. (_configThreadCount conf) - 1] $ \i ->
-        withLogTag logger ("Thread " <> sshow i) $ \taggedLogger ->
-            miningLoop conf ver taggedLogger mgr updateMap $
-                case _configWorker conf of
-                    SimulationWorker -> simulationWorker taggedLogger rng workerRate
-                    ExternalWorker -> externalWorker taggedLogger (_configExternalWorkerCommand conf)
-                    CpuWorker -> cpuWorker @Blake2s_256 taggedLogger
+    withWorker $ \worker -> do
+        forConcurrently_ [0 .. _configThreadCount conf - 1] $ \i ->
+            withLogTag logger ("Thread " <> sshow i) $ \taggedLogger ->
+                miningLoop conf ver taggedLogger mgr updateMap (worker taggedLogger)
   where
     tlsSettings = HTTP.TLSSettingsSimple (_configInsecure conf) False False
 
     workerRate = _getUnitPrefixed (_configHashRate conf) / fromIntegral (_configThreadCount conf)
+
+    -- provide the inner computation with an initialized worker
+    withWorker f = case _configWorker conf of
+        SimulationWorker -> do
+            rng <- MWC.createSystemRandom
+            f $ \l -> simulationWorker l rng workerRate
+        ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
+        CpuWorker -> f $ cpuWorker @Blake2s_256
+        StratumWorker -> Stratum.withStratumServer logger $ \ctx -> f (Stratum.submitWork ctx)
 
