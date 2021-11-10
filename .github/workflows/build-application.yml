@@ -135,7 +135,7 @@ jobs:
         COPY chainweb-mining-client/chainweb-mining-client.cabal .
         COPY chainweb-mining-client/cabal.project .
         COPY chainweb-mining-client/cabal.project.freeze .
-        ENTRYPOINT /chainweb-mining-client
+        ENTRYPOINT /chainweb-mining-client/chainweb-mining-client
         EOF
 
     - name: Set up QEMU
