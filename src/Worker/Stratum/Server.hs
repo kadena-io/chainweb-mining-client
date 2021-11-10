@@ -231,7 +231,7 @@ estimateHashRate ctx = do
         let recentHashRate = currentDifficulty / currentPeriodSeconds
         let newAvgHashRateSum = prevR + recentHashRate
 
-        writeTVar (_sessionHashRateSum ctx) $ HashRate $ newAvgHashRateSum
+        writeTVar (_sessionHashRateSum ctx) $ HashRate newAvgHashRateSum
         writeTVar (_sessionShardCount ctx) curCount
 
         return $ HashRate $ newAvgHashRateSum / int curCount
@@ -311,13 +311,13 @@ stratumDifficultyFromText t = case readEither @Int $ T.unpack t of
     throwM $ FromTextException $ "failed to read stratum difficulty specification: " <> t
 
 instance A.ToJSON StratumDifficulty where
-  toJSON WorkDifficulty = "work"
+  toJSON WorkDifficulty = "block"
   toJSON (DifficultyLevel i) = A.toJSON i
   toJSON (DifficultyPeriod i) = error "ToJSON StratumDifficulty: difficulty period is currently not supported"
 
 instance A.FromJSON StratumDifficulty where
   parseJSON v = case v of
-    A.String "work" -> return WorkDifficulty
+    A.String "block" -> return WorkDifficulty
     i@A.Number{} -> DifficultyLevel <$> A.parseJSON i
     e -> fail $ "failed to parse stratum difficulty specification: " <> show e
 
