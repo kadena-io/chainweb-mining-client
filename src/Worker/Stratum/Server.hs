@@ -261,16 +261,6 @@ targetPeriod = Period 10
 
 notify :: Logger -> AppData -> SessionState -> Job -> IO ()
 notify logger app sessionCtx job = do
-
-    -- TODO: we add some target adjustments here.
-    --
-    -- * if the time since the last share is very long we may proactively
-    --   reduce the target (but we'll have to be careful to not mess up
-    --   adjustement)
-    -- * if useJobTarget is true we should set it here
-    -- * if the job target is larger than the current session target
-    --   we should take some action.
-
     writeLog logger L.Info "sending notification"
     send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
 

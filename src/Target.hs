@@ -353,7 +353,7 @@ mkTargetLevel :: Level -> Target
 mkTargetLevel (Level i) = Target $ 2^(256-i) - 1
 
 getTargetLevel :: Target -> Level
--- getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 (i + 1)
+getTargetLevel (Target 0) = Level 256
 getTargetLevel (Target i) = Level $ int $ 256 - naturalLog2 i - 1
 {-# INLINE getTargetLevel #-}
 
