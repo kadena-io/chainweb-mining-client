@@ -17,7 +17,7 @@ let gitignoreSrc = import (pkgs.fetchFromGitHub {
     }) {};
 
 in
-pkgs.haskell.lib.doJailbreak (pkgs.haskell.packages.${compiler}.developPackage {
+pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.dontCheck (pkgs.haskell.packages.${compiler}.developPackage {
   name = builtins.baseNameOf ./.;
   root = gitignoreSrc.gitignoreSource ./.;
 
@@ -66,4 +66,4 @@ pkgs.haskell.lib.doJailbreak (pkgs.haskell.packages.${compiler}.developPackage {
       pkgs.haskell.packages.${compiler}.ghcid
     ];
   });
-})
+}))
