@@ -3,16 +3,17 @@ name: chainweb-mining-client
 description:
     A mining client for Kadena Chainweb. It supports
 
+    * mining with ASICs through a stratum server,
+    * simulated mining for testing,
     * multi threaded CPU mining,
-    * external mining workers (e.g. a GPU),
-    * simulated mining for testing.
+    * external mining workers (e.g. a GPU).
 
-    Competitive mining on the Kadena Chainweb Mainnet requires special mining
-    hardware, which usually comes with its own mining client and mining pool
-    support implementations. This generic mining client is intended mostly for
-    testing.
+    Competitive mining on the Kadena Mainnet requires special mining hardware
+    (ASIC), which connect to a Stratum Server from where they obtain work.
 
-version: 0.2
+    All other mining modes (GPU, CPU, and simulation) intended only for testing.
+
+version: 0.3
 synopsis: Mining Client for Kadena Chainweb
 homepage: https://github.com/kadena-io/chainweb-mining-client
 bug-reports: https://github.com/kadena-io/chainweb-mining-client/issues
@@ -20,11 +21,12 @@ license: BSD-3-Clause
 license-file: LICENSE
 author: Lars Kuhtz
 maintainer: lars@kadena.io
-copyright: Copyright (c) 2019 - 2020, Kadena LLC
+copyright: Copyright (c) 2019 - 2021, Kadena LLC
 category: Data, Mathematics
 build-type: Custom
 tested-with:
-      GHC==8.10.2
+      GHC==9.0.1
+      GHC==8.10.7
     , GHC==8.8.4
 extra-source-files:
     README.md

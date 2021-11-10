@@ -2,10 +2,10 @@
 
 A mining client for Kadena's chainweb node mining API. It supports
 
-* mining with an ASIC via Kadena Stratum (JSON RPC over TCP)
-* simulated mining for testing.
+* mining with ASICs through a stratum server,
+* simulated mining for testing,
 * multi threaded CPU mining,
-* external mining workers (e.g. a GPU),
+* external mining workers (e.g. a GPU).
 
 *Competitive mining on the Kadena Mainnet requires special mining hardware
 (ASIC), which connect to a Stratum Server from where they obtain work.*
