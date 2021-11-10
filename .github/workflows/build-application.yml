@@ -148,7 +148,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v3
       with:
-        images: ghcr.io/kadena-io/internal/chainweb-mining-client
+        images: ghcr.io/kadena-io/chainweb-mining-client
         tags: |
           type=sha
           type=ref,event=branch
