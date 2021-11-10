@@ -54,6 +54,7 @@ jobs:
       run: cabal update
     - name: Configure build
       run: |
+        rm -rf dist-newstyle/build/*/ghc-*/chainweb-mining-client-*/build/chainweb-mining-client/chainweb-mining-client
         cabal build all --dry-run
         cabal freeze
     - name: Install build dependencies
