@@ -26,9 +26,6 @@ A mining client for Kadena's chainweb node mining API. It supports
 A docker image of the latest version is available at
 `ghcr.io/kadena-io/chainweb-mining-client:lastest`.
 
-Prebuild binaries for the latest version are available from the [GitHub Release
-Site](https://github.com/kadena-io/chainweb-mining-client/releases/latest).
-
 Binaries can also be compiled with a recent version of GHC and cabal directly
 from [Hackage](https://hackage.haskell.org/package/chainweb-mining-client)
 
