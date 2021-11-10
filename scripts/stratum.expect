@@ -1,0 +1,33 @@
+#!/usr/env expect
+
+# script timeout (if things go wrong)
+set timeout 20
+
+#This spawns the telnet program and connects it to the variable name
+spawn telnet localhost 1917
+
+send "{ \"id\": 0, \"method\": \"mining.authorize\", \"params\": \[\"cc13b2e497f90b5d9d13ba4217ea578cd21e258a194a4fe6f43f87f02eae71be\", \"x\"\] }\r\n"
+expect -re ".*({.*\"id\": *0})\r" { puts "done authorize 0" }
+
+send "{ \"id\": 1, \"method\": \"mining.authorize\", \"params\": \[\"cc13b2e497f90b5d9d13ba4217ea578cd21e258a194a4fe6f43f87f02eae71be\", \"x\"\] }\r\n"
+expect -re ".*({.*\"id\": *1})\r" { puts "done authorize 1" }
+
+send "{ \"id\": 2, \"method\": \"mining.subscribe\", \"params\": \[\"kdaminer-v1.0.0\", null\] }\r\n"
+expect -re ".*({.*\"id\": *2})\r" { puts "done subscribe 2" }
+
+send "{ \"id\": 3, \"method\": \"mining.subscribe\", \"params\": \[\"kdaminer-v1.0.0\"\] }\r\n"
+expect -re ".*({.*\"id\": *3})\r" { puts "done subscribe 3" }
+
+send "{ \"id\": 4, \"method\": \"mining.subscribe\", \"params\": \[\] }\r\n"
+expect -re ".*({.*\"id\": *4})\r" { puts "done subscribe 4" }
+
+expect -re ".*({.*\"id\":null})\r" { puts "got notifcation 1" }
+expect -re ".*({.*\"id\":null})\r" { puts "got notifcation 2" }
+expect -re ".*({.*\"id\":null})\r" { puts "got notifcation 3" }
+
+exit 0
+
+# puts "output is: $expect_out(1,string)"
+
+# interact
+close $spawn_id

@@ -1,9 +1,12 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- |
 -- Module: Worker
@@ -20,7 +23,8 @@ module Worker
   Target(..)
 , encodeTarget
 , decodeTarget
-, targetToText16
+, targetToText16Le
+, targetToText16Be
 
 -- * Mining Work
 , Work(..)
@@ -34,41 +38,21 @@ module Worker
 , Worker
 ) where
 
-import qualified Data.ByteArray.Encoding as BA
+import qualified Data.Aeson as A
 import Data.Bytes.Get
 import Data.Bytes.Put
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Word
 
 import GHC.Generics
 
--- -------------------------------------------------------------------------- --
--- Hash Target
+import Text.Read
 
--- | Hash target. A little endian encoded 256 bit (unsigned) word.
---
--- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
---
-newtype Target = Target { _targetBytes :: BS.ShortByteString }
-    deriving (Show, Eq, Ord, Generic)
-    deriving newtype (Hashable)
+-- internal modules
 
-decodeTarget :: MonadGet m => m Target
-decodeTarget = Target . BS.toShort <$> getBytes 32
-{-# INLINE decodeTarget #-}
-
-encodeTarget :: MonadPut m => Target -> m ()
-encodeTarget (Target b) = putByteString $ BS.fromShort b
-{-# INLINE encodeTarget #-}
-
--- | Represent target bytes in hexadecimal base
---
-targetToText16 :: Target -> T.Text
-targetToText16 = T.decodeUtf8 . BA.convertToBase BA.Base16 . BS.fromShort . _targetBytes
-{-# INLINE targetToText16 #-}
+import Utils
+import Target
 
 -- -------------------------------------------------------------------------- --
 -- Work
@@ -78,9 +62,22 @@ targetToText16 = T.decodeUtf8 . BA.convertToBase BA.Base16 . BS.fromShort . _tar
 --
 -- Cf. https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format
 --
+-- NOTE: in Stratum this value is represented as encoded hexadecimal JSON
+-- string.
+--
 newtype Work = Work BS.ShortByteString
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Eq, Ord, Generic)
     deriving newtype (Hashable)
+    deriving (A.ToJSON, A.FromJSON) via HexEncodedShortByteString
+
+instance Show Work where
+    show (Work b) = "Work " <> show (HexEncodedShortByteString b)
+
+instance Read Work where
+    readPrec = do
+        Symbol "Work" <- lexP
+        (HexEncodedShortByteString b) <- readPrec
+        return (Work b)
 
 decodeWork :: MonadGet m => m Work
 decodeWork = Work . BS.toShort <$> getBytes 286
@@ -96,8 +93,9 @@ encodeWork (Work b) = putByteString $ BS.fromShort b
 -- | POW Nonce
 --
 newtype Nonce = Nonce Word64
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Eq, Ord, Generic)
     deriving newtype (Hashable)
+    deriving (Show, A.ToJSON, A.FromJSON) via (IntHexText Word64)
 
 -- -------------------------------------------------------------------------- --
 -- Mining Worker

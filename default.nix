@@ -1,6 +1,6 @@
-{ compiler ? "ghc881"
-, rev      ? "c4f97342ba8ac84def72328616dd05d005bb4715"
-, sha256   ? "1p2gbisib2jrz4r9b5vzfvmirgmz9sr2ksalngaw908vvg9hsvai"
+{ compiler ? "ghc8104"
+, rev      ? "7e9b0dff974c89e070da1ad85713ff3c20b0ca97"
+, sha256   ? "1ckzhh24mgz6jd1xhfgx0i9mijk6xjqxwsshnvq789xsavrmsc36"
 , pkgs     ?
     import (builtins.fetchTarball {
       url    = "https://github.com/NixOS/nixpkgs/archive/${rev}.tar.gz";
@@ -36,6 +36,12 @@ pkgs.haskell.lib.doJailbreak (pkgs.haskell.packages.${compiler}.developPackage {
       ver = "0.6.0";
       sha256 = "0ia2bhy35qv1xgbqrx0jalxznj8zgg97y0zkp8cnr1r3pq5adbcd";
     } {};
+
+    streaming-events = doJailbreak (self.callHackageDirect {
+      pkg = "streaming-events";
+      ver = "1.0.1";
+      sha256 = "11v9rrhvlxlq43m5pw63hdfn6n0fkqryphvplild1y920db96wk9";
+    } {});
 
     # To discover more functions that can be used to modify haskell
     # packages, run "nix-repl", type "pkgs.haskell.lib.", then hit
