@@ -185,7 +185,7 @@ newtype Miner = Miner MinerPublicKey
 
 instance ToJSON Miner where
     toJSON (Miner (MinerPublicKey k)) = object
-        [ "account" .= k
+        [ "account" .= ("k:" <> k)
         , "public-keys" .= [ k ]
         , "predicate" .= ("keys-all" :: T.Text)
         ]
