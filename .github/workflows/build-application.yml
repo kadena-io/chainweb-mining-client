@@ -32,7 +32,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: Install GHC and Cabal
-      uses: larskuhtz/actions/setup@e0f107055073590682bc5264b8da5c2b6af39a65
+      uses: haskell/actions/setup@v1.2.7
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
