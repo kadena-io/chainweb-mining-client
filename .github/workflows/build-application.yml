@@ -58,7 +58,7 @@ jobs:
         cabal build all --dry-run
         cabal freeze
     - name: Install build dependencies
-      run: cabal build --only-dependencies
+      run: cabal build --only-dependencies --enable-tests
     - name: Build
       run: cabal build
 
