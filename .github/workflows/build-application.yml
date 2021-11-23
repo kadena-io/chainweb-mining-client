@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         ghc: ['8.8.4', '8.10.7', '9.0.1']
-        cabal: ['3.4.0.0']
+        cabal: ['3.6']
         os: ['ubuntu-18.04', 'ubuntu-20.04', 'macOS-latest']
 
     steps:
@@ -32,7 +32,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: Install GHC and Cabal
-      uses: larskuhtz/actions/setup@e0f107055073590682bc5264b8da5c2b6af39a65
+      uses: haskell/actions/setup@v1.2.7
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
@@ -47,7 +47,7 @@ jobs:
           ~/.cabal/packages
           ~/.cabal/store
           dist-newstyle
-        key: ${{ matrix.os }}-${{ matrix.ghc }}-0-cabal
+        key: ${{ matrix.os }}-${{ matrix.ghc }}-1-cabal
 
     # Build
     - name: Update package database
@@ -55,10 +55,10 @@ jobs:
     - name: Configure build
       run: |
         rm -rf dist-newstyle/build/*/ghc-*/chainweb-mining-client-*/build/chainweb-mining-client/chainweb-mining-client
-        cabal build all --dry-run
-        cabal freeze
+        cabal build all --dry-run --enable-tests
+        cabal freeze --enable-tests
     - name: Install build dependencies
-      run: cabal build --only-dependencies
+      run: cabal build --only-dependencies --enable-tests
     - name: Build
       run: cabal build
 

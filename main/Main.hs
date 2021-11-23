@@ -51,6 +51,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as BS
 import Data.Hashable
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe
 import Data.Streaming.Network
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -179,13 +180,17 @@ instance FromJSON MinerPublicKey where
     {-# INLINE parseJSON #-}
         -- TODO perform well-formedness checks
 
-newtype Miner = Miner MinerPublicKey
+newtype MinerAccount = MinerAccount T.Text
     deriving (Show, Eq, Ord, Generic)
-    deriving newtype (Hashable)
+    deriving newtype (Hashable, ToJSON, FromJSON)
+
+data Miner = Miner MinerPublicKey (Maybe MinerAccount)
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
 
 instance ToJSON Miner where
-    toJSON (Miner (MinerPublicKey k)) = object
-        [ "account" .= k
+    toJSON (Miner (MinerPublicKey k) account) = object
+        [ "account" .= fromMaybe (MinerAccount ("k:" <> k)) account
         , "public-keys" .= [ k ]
         , "predicate" .= ("keys-all" :: T.Text)
         ]
@@ -237,6 +242,7 @@ data Config = Config
     , _configUseTls :: !Bool
     , _configInsecure :: !Bool
     , _configPublicKey :: !MinerPublicKey
+    , _configAccount :: !(Maybe MinerAccount)
     , _configThreadCount :: !Natural
     , _configGenerateKey :: !Bool
     , _configLogLevel :: !LogLevel
@@ -257,6 +263,7 @@ defaultConfig = Config
     , _configUseTls = True
     , _configInsecure = True
     , _configPublicKey = MinerPublicKey ""
+    , _configAccount = Nothing
     , _configThreadCount = 10
     , _configGenerateKey = False
     , _configLogLevel = Info
@@ -274,6 +281,7 @@ instance ToJSON Config where
         , "useTls" .= _configUseTls c
         , "insecure" .= _configInsecure c
         , "publicKey" .= _configPublicKey c
+        , "account" .= _configAccount c
         , "threadCount" .= _configThreadCount c
         , "generateKey" .= _configGenerateKey c
         , "logLevel" .= logLevelToText @T.Text (_configLogLevel c)
@@ -291,6 +299,7 @@ instance FromJSON (Config -> Config) where
         <*< configUseTls ..: "useTls" % o
         <*< configInsecure ..: "insecure" % o
         <*< configPublicKey ..: "publicKey" % o
+        <*< configAccount ..: "account" % o
         <*< configThreadCount ..: "threadCount" % o
         <*< configGenerateKey ..: "generateKey" % o
         <*< setProperty configLogLevel "logLevel" parseLogLevel o
@@ -324,7 +333,11 @@ parseConfig = id
     <*< configPublicKey .:: fmap MinerPublicKey . strOption
         % short 'k'
         <> long "public-key"
-        <> help "the public-key for the mining rewards account"
+        <> help "public-key for the mining rewards account"
+    <*< configAccount .:: fmap (Just . MinerAccount) . strOption
+        % short 'a'
+        <> long "account"
+        <> help "account for the mining rewards (default: public-key prefixed with 'k:')"
     <*< configThreadCount .:: option auto
         % short 'c'
         <> long "thread-count"
@@ -494,7 +507,11 @@ getJob conf ver mgr = do
         Right (a,b,c) -> return (a, b, c)
   where
     req = (baseReq conf ver "mining/work")
-        { HTTP.requestBody = HTTP.RequestBodyLBS $ encode $ Miner $ _configPublicKey conf
+        { HTTP.requestBody = HTTP.RequestBodyLBS
+            $ encode
+            $ Miner
+                (_configPublicKey conf)
+                (_configAccount conf)
         , HTTP.requestHeaders = [("content-type", "application/json")]
         }
 
