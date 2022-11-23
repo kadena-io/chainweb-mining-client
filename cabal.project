@@ -2,4 +2,3 @@ packages: .
 allow-newer:
     streaming-events:*
 
-constraints: sydtest <0.5

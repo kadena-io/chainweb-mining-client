@@ -37,7 +37,6 @@ module Worker.Stratum
 
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Monad.Catch
 

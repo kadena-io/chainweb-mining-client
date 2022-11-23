@@ -9,9 +9,9 @@ description:
     * external mining workers (e.g. a GPU).
 
     Competitive mining on the Kadena Mainnet requires special mining hardware
-    (ASIC), which connect to a Stratum Server from where they obtain work.
+    (ASIC), which connects to a Stratum Server from where it obtains work.
 
-    All other mining modes (GPU, CPU, and simulation) intended only for testing.
+    All other mining modes (GPU, CPU, and simulation) are intended only for testing.
 
 version: 0.3
 synopsis: Mining Client for Kadena Chainweb
@@ -21,13 +21,13 @@ license: BSD-3-Clause
 license-file: LICENSE
 author: Lars Kuhtz
 maintainer: lars@kadena.io
-copyright: Copyright (c) 2019 - 2021, Kadena LLC
+copyright: Copyright (c) 2019 - 2022, Kadena LLC
 category: Data, Mathematics
 build-type: Custom
 tested-with:
-      GHC==9.0.1
+      GHC==9.2.4
+    , GHC==9.0.2
     , GHC==8.10.7
-    , GHC==8.8.4
 extra-source-files:
     README.md
     CHANGELOG.md
