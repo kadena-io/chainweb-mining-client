@@ -81,7 +81,7 @@ cpuWorker logger orig@(Nonce o) trg work = do
             -- that many times and injects an updated creation time in each cycle.
             let go0 :: Int -> Int64 {- microseconds -} -> Nonce -> IO ()
                 go0 x t !n = do
-                    injectTime t buf
+                    injectTime_ t buf
                     go1 x n >>= \case
                         Nothing -> return ()
                         Just n' -> do
