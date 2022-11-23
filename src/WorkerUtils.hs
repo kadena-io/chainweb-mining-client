@@ -1,9 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UnboxedTuples #-}
 
 -- |
 -- Module: WorkerUtils
@@ -18,7 +16,10 @@ module WorkerUtils
 ( -- * Block Creation Time
   getCurrentTimeMicros
 , injectTime
+, injectTime_
 , encodeTimeToWord64
+, incrementTimeMicros
+, incrementTimeMicros_
 
 -- * Nonces
 , injectNonce
@@ -42,7 +43,7 @@ import Data.Time.Clock.System
 import Data.Word
 
 import Foreign.Ptr (castPtr)
-import Foreign.Storable (peekElemOff, pokeByteOff)
+import Foreign.Storable (peekElemOff, pokeByteOff, peekByteOff)
 
 import GHC.Exts
 
@@ -53,6 +54,7 @@ import Target
 import Utils
 
 import Worker
+import Data.Text.Unsafe (unsafeDupablePerformIO)
 
 -- -------------------------------------------------------------------------- --
 -- Block Creation Time
@@ -62,13 +64,40 @@ getCurrentTimeMicros = do
     MkSystemTime secs nanos <- getSystemTime
     return $! secs * 1000000 + (int nanos `div` 1000)
 
-injectTime :: Int64 -> Ptr Word8 -> IO ()
-injectTime t buf = pokeByteOff buf 8 $ encodeTimeToWord64 t
-{-# INLINE injectTime #-}
-
 encodeTimeToWord64 :: Int64 -> Word64
 encodeTimeToWord64 t = BA.unLE . BA.toLE $ unsigned t
 {-# INLINE encodeTimeToWord64 #-}
+
+decodeTimeToInt64 :: Word64 -> Int64
+decodeTimeToInt64 t = signed . BA.fromLE $ BA.LE t
+
+{-# INLINE decodeTimeToInt64 #-}
+injectTime_ :: Int64 -> Ptr Word8 -> IO ()
+injectTime_ t buf = pokeByteOff buf 8 $ encodeTimeToWord64 t
+{-# INLINE injectTime_ #-}
+
+injectTime :: Int64 -> Work -> Work
+injectTime t (Work bytes) = unsafeDupablePerformIO $
+    BS.useAsCStringLen bytes $ \(ptr, l) -> do
+        injectTime_ t (castPtr ptr)
+        Work <$> BS.packCStringLen (ptr, l)
+{-# INLINE injectTime #-}
+
+incrementTimeMicros_ :: Int64 -> Ptr Word8 -> IO ()
+incrementTimeMicros_ i buf = do
+    t <- decodeTimeToInt64 <$> peekByteOff buf 8
+    pokeByteOff buf 8 $ encodeTimeToWord64 (t + i)
+{-# INLINE incrementTimeMicros_ #-}
+
+-- | Increment the time value in a work header by the given number of
+-- microseconds
+--
+incrementTimeMicros :: Int64 -> Work -> Work
+incrementTimeMicros t (Work bytes) = unsafeDupablePerformIO $
+    BS.useAsCStringLen bytes $ \(ptr, l) -> do
+        incrementTimeMicros_ t (castPtr ptr)
+        Work <$> BS.packCStringLen (ptr, l)
+{-# INLINE incrementTimeMicros #-}
 
 -- -------------------------------------------------------------------------- --
 -- Check Work Headers

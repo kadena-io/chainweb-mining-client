@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -258,7 +257,7 @@ nextJobId (JobId i) = JobId (i + 1)
 {-# INLINE nextJobId #-}
 
 -- | A string that identifies the client mining device. It is submited with
--- shares and pools my keep a record for the user to identify what device mined
+-- shares and pools may keep a record for the user to identify what device mined
 -- shares.
 --
 newtype ClientWorker = ClientWorker T.Text

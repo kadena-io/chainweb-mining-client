@@ -1,21 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- |
 -- Module: Worker.Stratum
@@ -43,7 +35,8 @@ module Worker.Stratum
 ( submitWork
 ) where
 
-import Control.Concurrent.MVar
+import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Monad.Catch
 
@@ -72,31 +65,45 @@ import Worker.Stratum.Server
 -- enough active work items available.
 --
 submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
-submitWork ctx l _nonce trg work =  withLogTag l "Stratum Worker" $ \logger -> do
-    mask $ \umask -> do
-        job <- umask $ newJob logger ctx trg work
-        flip onException (writeLog logger L.Info ("discarded unfinished job: "  <> sshow (_jobId job))) $
-            flip finally (removeJob ctx (_jobId job)) $ umask $ do
-                checkJob logger job
-      where
-        -- Check that the solution for a job is correct. This should never fail.
-        -- Sessions should only submit shares that are actually solving the
-        -- block.
-        checkJob logger job = do
-            nonce <- takeMVar (_jobResult job) -- at this point the mvar is available again
-            !w <- injectNonce nonce (_jobWork job)
-            checkTarget (_jobTarget job) w >>= \case
-                True -> do
-                    writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
-                    return w
-                False -> do
-                    writeLog logger L.Error $ "rejected job: invalid result " <> sshow (_jobId job)
-                    writeLog logger L.Info $ "invalid nonce: " <> sshow nonce
-                        <> ", target: " <> sshow (_jobTarget job)
-                        <> ", job work: " <> sshow (_jobWork job)
-                        <> ", result work: " <> sshow w
-                        <> ". Continue with job"
-                    checkJob logger job
+submitWork ctx l nonce trg work = withLogTag l "Stratum Worker" $ \logger ->
+    let run w = waitForFirst
+            (runJob ctx logger nonce trg w)
+            (threadDelay jobRateMicros >> run (incrementTimeMicros jobRateMicros w))
+    in run work
+  where
+    jobRateMicros :: Integral a => a
+    jobRateMicros = 1000 * fromIntegral (_ctxRate ctx)
+
+    waitForFirst :: IO Work -> IO Work -> IO Work
+    waitForFirst a b = race a b >>= \case
+        Right x -> return x
+        Left x -> return x
+
+
+runJob :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
+runJob ctx logger _nonce trg work = mask $ \umask -> do
+    job <- umask $ newJob logger ctx trg work
+    flip onException (writeLog logger L.Info ("discarded unfinished job: "  <> sshow (_jobId job))) $
+        flip finally (removeJob ctx (_jobId job)) $ umask $ checkJob job
+  where
+    -- Check that the solution for a job is correct. This should never fail.
+    -- Sessions should only submit shares that are actually solving the
+    -- block.
+    checkJob job = do
+        nonce <- takeMVar (_jobResult job) -- at this point the mvar is available again
+        !w <- injectNonce nonce (_jobWork job)
+        checkTarget (_jobTarget job) w >>= \case
+            True -> do
+                writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
+                return w
+            False -> do
+                writeLog logger L.Error $ "rejected job: invalid result " <> sshow (_jobId job)
+                writeLog logger L.Info $ "invalid nonce: " <> sshow nonce
+                    <> ", target: " <> sshow (_jobTarget job)
+                    <> ", job work: " <> sshow (_jobWork job)
+                    <> ", result work: " <> sshow w
+                    <> ". Continue with job"
+                checkJob job
 
 newJob :: Logger -> StratumServerCtx -> Target -> Work -> IO Job
 newJob logger ctx trg work = do

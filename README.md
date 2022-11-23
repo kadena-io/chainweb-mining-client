@@ -8,9 +8,9 @@ A mining client for Kadena's chainweb node mining API. It supports
 * external mining workers (e.g. a GPU).
 
 *Competitive mining on the Kadena Mainnet requires special mining hardware
-(ASIC), which connect to a Stratum Server from where they obtain work.*
+(ASIC), which connects to a Stratum Server from where it obtains work.*
 
-*All other mining modes (GPU, CPU, and simulation) intended only for testing.*
+*All other mining modes (GPU, CPU, and simulation) are intended only for testing.*
 
 *   [Installation](#installation)
 *   [Usage](#usage)
@@ -20,6 +20,7 @@ A mining client for Kadena's chainweb node mining API. It supports
     *  [CPU Mining](#cpu-mining)
     *  [GPU Mining](#gpu-mining)
     *  [Creating a Configuration File](#creating-a-configuration-file)
+*   [Related Resources](#related-resources)
 
 ## Installation
 
@@ -34,7 +35,6 @@ cabal install chainweb-mining-client
 ```
 
 or from the GitHub sources
-
 
 ```sh
 git clone https://github.com/kadena-io/chainweb-mining-client/
@@ -56,13 +56,15 @@ Usage: chainweb-mining-client [--info] [--long-info] [-v|--version] [--license]
                               [-r|--hash-rate ARG] [-n|--node DOMAIN:PORT]
                               [(-t|--tls) | --no-tls]
                               [(-x|--insecure) | --no-insecure]
-                              [-k|--public-key ARG] [-c|--thread-count ARG]
+                              [-k|--public-key ARG] [-a|--account ARG]
+                              [-c|--thread-count ARG]
                               [--generate-key | --no-generate-key]
                               [-l|--log-level error|warn|info|debug]
                               [-w|--worker cpu|external|simulation|stratum]
                               [--external-worker-cmd ARG] [--stratum-port ARG]
                               [--stratum-interface ARG]
-                              [--stratum-difficulty ARG]
+                              [--stratum-difficulty ARG] [-s|--stratum-rate ARG]
+
   Kadena Chainweb Mining Client
 
 Available options:
@@ -87,7 +89,9 @@ Available options:
   --no-tls                 unset flag tls
   -x,--insecure            accept self-signed TLS certificates
   --no-insecure            unset flag insecure
-  -k,--public-key ARG      the public-key for the mining rewards account
+  -k,--public-key ARG      public-key for the mining rewards account
+  -a,--account ARG         account for the mining rewards (default: public-key
+                           prefixed with 'k:')
   -c,--thread-count ARG    number of concurrent mining threads
   --generate-key           Generate a new key pair and exit
   --no-generate-key        unset flag generate-key
@@ -108,6 +112,8 @@ Available options:
                            new work, or number between 0 and 256 for specifiying
                            a fixed difficulty as logarithm of base 2 (number of
                            leading zeros).
+  -s,--stratum-rate ARG    Rate (in milliseconds) at which a stratum worker
+                           thread emits jobs.
 
 Configurations are loaded in order from the following sources:
   1. Configuration files from locations provided through --config-file options
@@ -139,22 +145,26 @@ private: 64ef6379db5ef6004aff98182688c6e8b4a5229e706f1ccf6a73b05b1432aedf
 
 ### Mining on Mainnet With an ASIC
 
-chainweb-mining-client needs access to the mining API of a full Chainweb node in
+chainweb-mining-client needs access to the mining API of a full [Chainweb
+node](https://github.com/kadena-io/chainweb-node) in
 the Kadena Mainnet. The node must be configured to enable the mining API with
-the Pact public key and account name of the miner. Rewards for mined blocks will
-be credited to that account.
+the Pact *public* key (and, optionally, account name) of the miner. Rewards for
+mined blocks will be credited to that account. The default is to use the `k:`
+account for the key.
 
-Assuming that `example.com` serves the chainweb-node mining API on port 443, the following command can be used
-to run chainweb-mining-client with the stratum server on port 1917:
+The `--enable-mining-coordination`, `--mining-public-key` can be used to
+configure chainweb-node for mining. The mining API is served on the service API
+port (default is 1848).
+
+
+Assuming that `example.com` serves the chainweb-node mining API on port 1848,
+the following command can be used to run chainweb-mining-client with the stratum
+server on port 1917:
 
 ```
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
-    --node example.com:443 \
-    --log-level info \
-    --thread-count 2 \
-    --worker stratum \
+    --node example.com:1848 \
     --stratum-port 1917
 ```
 
@@ -164,63 +174,70 @@ pool address that is used to configure the ASIC miner is
 
 One can point more than a single ASIC miner to the same chainweb-mining-client
 stratum server. All connected clients work together and all mining rewards are
-credited to the same account, that is configured in the Chainweb node.
+credited to the same account, that is configured in chainweb node.
 
 By default the stratum server sets the difficulty of the work that is sent to
-the mining clients to the actual difficulty of block of the most recent work.
-This means that it can take a long time before the client solves any work. It
-also means that the target is reset for each new work item that is sent.
+the mining clients to the actual difficulty of the block of the most recent
+work. This means that it can take a long time before the client solves any work.
+It also means that the target is reset for each new block.
 
 It is also possible to set a custom difficulty. As a consequence not all
 accepted solutions qualify as solved blocks, but ASIC miner may provide a more
 continuous feedback on its current performance. Some devices may also be more
 efficient in this mode an yield higher returns.
 
-The following command runs a miner at a fixed difficulty level:
+The thread count determines how many independent stratum works are used to
+concurrently provide work to the clients. Each stratum worker receives one work
+header at a time from the chainweb-node mining API and emits jobs for that work
+to all clients at a configurable rate. The effective rate of jobs is higher than
+then configured rate because when upstream work gets preempted. Each client
+receives are all jobs from all workers.
+
+The following command runs two stratum workers that serve jobs at least every 500
+milliseconds at a fixed difficulty level of 50.
 
 ```
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
-    --node example.com:443 \
-    --worker stratum \
-    --log-level info \
-    --thread-count 2 \
+    --node example.com:1848 \
     --stratum-port 1917 \
-    --statum-difficulty=46
+    --stratum-difficulty=50 \
+    --stratum-rate=500 \
+    --thread-count=2
 ```
+
+The solution space for each mining job is about 280 terra hashes. The
+`--stratum-rate` should be chosen such that the mining devices does not perform
+more than that number of hashes within the provided time range. For instance,
+for an miner that performs 140TH/s the `--stratum-rate` should be at least 2000
+(2 seconds).
 
 The `--stratum-difficulty` parameter expects a integral number between 0 and
 256. It denotes the difficulty as a logarithm of base 2. In practice the actual
 target uses a difficulty level of at least 42 and at most the difficulty of
 block of the current work.
 
-It may help to experiment a little with the `--stratum-difficulty` and the
-`--thread-count` parameters. We found, that small values for `--thread-count`
-and moderate values for `--stratum-difficulty` (in the upper fourties / lower
-fifties) yielded good results. But that may differ between different devices and
-setups.
+It may help to experiment a little with the `--stratum-difficulty`,
+`--stratum-rate`, and the `--thread-count` parameters. We found, that small
+values for `--thread-count` (one to three) and moderate values for
+`--stratum-difficulty` (in the upper forties / lower fifties) yielded good
+results. The But that may differ between different devices and setups.
+
+If the chainweb-node mining API is served via a reverse proxy with TLS the
+`--tls` flag must be used to enable HTTPS.
 
 ### CPU Mining
 
-Assuming that `example.com` serves the chainweb-node mining API on port 443, the
+Assuming that `example.com` serves the chainweb-node mining API on port 1848, the
 following command can be used for CPU mining to the from the previous example:
 
 ```sh
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cfa \
-    --node example.com:443 \
+    --node example.com:1848 \
     --worker cpu \
     --thread-count 16 \
-    --log-level info
 ```
-
-If the chainweb-node uses a self-signed certificate the flag `--insecure` can be
-used to disable certificate validation.
-
-If a version of chainweb-node is used that serves the mining API on a separate
-port using plain HTTP, the `--tls` flag is ommitted.
 
 ### GPU Mining
 
@@ -230,9 +247,8 @@ work. An example for such a GPU mining tool for Kadena is
 
 ```sh
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
-    --node example.com:443 \
+    --node example.com:1848 \
     --worker external \
     --external-miner-cmd bigolchunus
 ```
@@ -242,9 +258,8 @@ extra parameters are appended to the command. E.g.
 
 ```sh
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
-    --node example.com:443 \
+    --node example.com:1848 \
     --worker external \
     --external-worker-cmd "bigolchunus -d 2"
 ```
@@ -259,27 +274,30 @@ configuration file by adding the `--print-config` parameter
 
 ```sh
 chainweb-mining-client \
-    --tls \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
-    --node example.com:443 \
-    --worker external \
-    --external-worker-cmd "bigolchunus -d 2" \
+    --node example.com:1848 \
+    --stratum-port 1917 \
+    --statum-difficulty=50
     --print-config > config.yml
 ```
 
-This would result in the following configuration file:
+This results in the following configuration file:
 
 ```yaml
-logLevel: info
-threadCount: 10
-node: example.com:443
-publicKey: 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf
-externalWorkerCommand: bigolchunus -d 2
+account: null
+externalWorkerCommand: echo 'no external worker command configured' && /bin/false
 generateKey: false
 hashRate: 1000000.0
-useTls: true
 insecure: true
-worker: external
+logLevel: info
+node: example.com:1848
+publicKey: 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf
+stratumDifficulty: 50
+stratumInterface: '*'
+stratumPort: 1917
+threadCount: 10
+useTls: true
+worker: stratum
 ```
 
 The configuration can then be used via
@@ -287,3 +305,11 @@ The configuration can then be used via
 ```sh
 chainweb-mining-client --config-file config.yml
 ```
+
+## Related Resources
+
+*   [Chainweb Node Project Page](https://github.com/kadena-io/chainweb-node)
+*   [Kadena Stratum Protocol](https://gist.github.com/mightybyte/f1567c2bec0380539c638225fb8c1cf4)
+*   [mining API of chainweb-node](https://api.chainweb.com/openapi/#tag/mining)
+*   [work header format](https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format).
+*   [mining API wiki](https://github.com/kadena-io/chainweb-node/wiki/Mining-API).

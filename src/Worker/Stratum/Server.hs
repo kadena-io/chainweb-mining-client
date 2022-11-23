@@ -1,10 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- |
 -- Module: Worker.Stratum.Server
@@ -36,12 +34,15 @@ import qualified Data.Attoparsec.ByteString as P
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.HashMap.Strict as HM
+import Data.Int
 import Data.IORef
 import Data.Maybe
 import Data.Streaming.Network
 import qualified Data.Text as T
 
 import Network.HostAddress
+
+import Numeric.Natural
 
 import qualified Streaming.Prelude as S
 
@@ -68,7 +69,7 @@ import Worker.Stratum.Protocol
 -- | 16 bit allows for 65536 mining clients
 --
 -- nonce1Size :: NonceSize
--- nonce1Size = 4
+-- nonce1Size = 2
 
 data PoolCtx = PoolCtx
     { _workerAuthorization :: Authorize
@@ -119,6 +120,11 @@ data Job = Job
     , _jobTarget :: !Target
     , _jobWork :: !Work
     , _jobResult :: !(MVar Nonce)
+    }
+
+incrementJobTime :: Int64 -> Job -> Job
+incrementJobTime i job = job
+    { _jobWork = incrementTimeMicros i (_jobWork job)
     }
 
 noopJob :: Job
@@ -182,19 +188,30 @@ data StratumServerCtx = StratumServerCtx
         -- ^ Ticket counter for job ids.
 
     , _ctxDifficulty :: !StratumDifficulty
+
+    , _ctxRate :: !Natural
+        -- ^ Rate in milliseconds at which a jobs for a given work item are
+        -- emitted. Note that each indiviual stratum worker will emit jobs at
+        -- this rate.
     }
 
-newStratumServerCtx :: StratumDifficulty -> IO StratumServerCtx
-newStratumServerCtx spec = StratumServerCtx
+newStratumServerCtx :: StratumDifficulty -> Natural -> IO StratumServerCtx
+newStratumServerCtx spec rate = StratumServerCtx
     (\_ _ -> return (Right ()))
     <$> newTVarIO mempty
     <*> newTVarIO noopJob
     <*> newIORef noJobId
     <*> pure spec
+    <*> pure rate
 
 -- -------------------------------------------------------------------------- --
 -- Sessions
 
+-- | 16 bit allows for 65536 mining clients/spaces
+--
+-- This leaves about 2^(6*8) different nonces for the miner. That's corresponds
+-- to 280TH. So a miner with 280TH/s would exhaustively search this space in 1s.
+--
 defaultNonce1Size :: NonceSize
 defaultNonce1Size = fromJust $ nonceSize @Int 2
 
@@ -262,7 +279,7 @@ targetPeriod = Period 10
 notify :: Logger -> AppData -> SessionState -> Job -> IO ()
 notify logger app sessionCtx job = do
     writeLog logger L.Info "sending notification"
-    send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous wor
+    send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous work
 
 
 -- | TODO: we probably need some protection against clients keeping
@@ -494,8 +511,6 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
     awaitSubscribe sctx = atomically $ void $ takeTMVar (_subscribed sctx)
 
-    -- Should we rate limit this stream by randomly skipping blocks?
-    --
     jobStream :: S.Stream (S.Of Job) IO ()
     jobStream = do
         cur <- liftIO $ readTVarIO (_ctxCurrentJob ctx)
@@ -608,10 +623,11 @@ withStratumServer
     -> Port
     -> HostPreference
     -> StratumDifficulty
+    -> Natural
     -> (StratumServerCtx -> IO ())
     -> IO ()
-withStratumServer l port host spec inner = withLogTag l "Stratum Server" $ \logger -> do
-    ctx <- newStratumServerCtx spec
+withStratumServer l port host spec rate inner = withLogTag l "Stratum Server" $ \logger -> do
+    ctx <- newStratumServerCtx spec rate
     race (server logger ctx) (inner ctx) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
         Right _ -> do
@@ -636,7 +652,7 @@ withStratumServer l port host spec inner = withLogTag l "Stratum Server" $ \logg
 -- {"id":null,"method":"mining.set_target","params":["0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff"]}
 -- {"id":null,"method":"mining.notify","params":["6412800009e8","00000000000000001128f13f5ccf050092f4573bc51d0fcf58a3729d3d4f57f9f279bbb50c793a6446fcfd226c8a4c1d0300080000003903c8b45da2ceaf0fab587860f7868ab29ea35fc4ac16796f7dcba43749f86b0d000000e77649998da94d3be41ad1e8d4038c0d326680a7ee9fdbaccb98f98ac25f7fe512000000d88e2cf14591a36a52bf31f1176f5306a196e95dde5e18abf6af306442a402f1019fd29b54b24d0c484656cd24bc0ba6aade86888e889f9c100100000000000014e70eccbc36b15e8960c845a895817f9cc3722059a51a233eb4839ffaa5824503000000b44b93673c8f1b633403000000000000000000000000000000000000000000006e0620000000000005000000648c1c745bcf05000000000000000000",true]}
 -- {"id":null,"method":"mining.notify","params":["645a800809e8","0000000000000000f4450a405ccf0500d8c9800d1a2021618d83f88b5d1b3d21fd068d40e73676fb3b8a164d8878d51e0300010000002f4fa19a2ddbc10ffb1e6076e6ca881fbd254e109b7490ac6362c8ce371e501d08000000b8b8d54da5d10f79b9920dce6eb1884ad9cedf85640eea2ef5164fea8de08a4c09000000423e846c73a0d1f7f002bb34de2ba9b4559dea999c8a00a94caa84408cf87ceff9e53f39b6b03dbb6e67fe63d1659afc888d4842049ac7260f01000000000000dcc0c0a68efe1a30ea8d72f4a748a46b7cc1ded1d5cc5932d7709c1b9f16abd606000000f37dbe0df9aac5663403000000000000000000000000000000000000000000006d0620000000000005000000615dc5725bcf05000000000000000000",true]}
-
+--
 -- $ telenet kda.ss.poolflare.com 443
 -- Trying 192.99.233.13...
 -- Connected to kda.ss.poolflare.com.
@@ -650,4 +666,35 @@ withStratumServer l port host spec inner = withLogTag l "Stratum Server" $ \logg
 -- {"id":null,"method":"mining.notify","params":["02040844","0000000000000000ac87cfaf5ccf050098d107d0470e4de368c92aa0235e190e67cc5c7cb9ee9c485439b51c566fc249030008000000608351babdabc848f90ad4891044462291d652e390a1dd6ecbb44ab733a33dce0d000000377b67dfa6df2f33f3edcb784cf3044ceee29fefaef0b90a69996c91b874c80812000000339a23f547d271eb4a68c0761b16bb5d558a1cd927a57312ece1f5ea7381f839693e8cb25bc71cc2bcb4ef84fe0119f21300b83ab768a44105010000000000002491767e21e31c67eef18cf5e8a704dc936e3a98b026f2175e672b506fa9068203000000bfde81ee849ecca0340300000000000000000000000000000000000000000000ad0620000000000005000000e243b7415ccf05000000000000000000"]}
 -- {"id":null,"method":"mining.notify","params":["243fc4d7","0000000000000000a298c5b05ccf050098d107d0470e4de368c92aa0235e190e67cc5c7cb9ee9c485439b51c566fc249030008000000608351babdabc848f90ad4891044462291d652e390a1dd6ecbb44ab733a33dce0d000000377b67dfa6df2f33f3edcb784cf3044ceee29fefaef0b90a69996c91b874c80812000000339a23f547d271eb4a68c0761b16bb5d558a1cd927a57312ece1f5ea7381f839693e8cb25bc71cc2bcb4ef84fe0119f21300b83ab768a44105010000000000002491767e21e31c67eef18cf5e8a704dc936e3a98b026f2175e672b506fa9068203000000bfde81ee849ecca0340300000000000000000000000000000000000000000000ad0620000000000005000000e243b7415ccf05000000000000000000"]}
 
+-- $ telnet kda.antpool.com 9026
+-- Trying 172.65.236.4...
+-- Connected to 707385506aed4610a1756cb8ac239332.pacloudflare.com.
+-- Escape character is '^]'.
+-- { "id":1, "method": "mining.authorize", "params":["136029d4a40642de75bebca833ea150fc027e08fbedd29c943aab87810e77378", ""] }
+-- {"error":null,"id":1,"result":true}
+-- {"id":null,"method":"mining.set_target","params":["0000000000ffff00000000000000000000000000000000000000000000000000"]}
+-- {"id":null,"method":"mining.notify","params":["425","0000000000000000f8292ccbb8ed050062ee1868a76a8dcab27205756faf64f675f719bf1abe4aaf3aa016c58bca78b703000600000059fdb247d287d818e205cb180d1990de6377953f5ced9a2f3c39baed1b209dda0b0000000614c98cabe4573ea0c10d35f842b72dfb878960131660c9a9bf26755c29b9e410000000d042253d5ab72315f2aa246aa391b997a596c7da52d086c56ecb097b3b1ef8f5d21327dc3d6a411db58e439434eab8d041c36315371f7ff73b000000000000009b8122e092a3ee286b0a6e054825cd61a10567c4525358cbc9384034959cce2a010000005820b5183128e3547b29000000000000000000000000000000000000000000002efe3000000000000500000045032236b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["438","000000000000000050d833cbb8ed05009cc3917479d76870c546e0d88691e70d963bef9f4ea8dcc8d41d9e9b3d7767d3030004000000d22584a2605b362cf57472e920e2daef770b7cb30066e17296b934e503e121a20600000059fdb247d287d818e205cb180d1990de6377953f5ced9a2f3c39baed1b209dda07000000b8cda94e11f8f19090986db5b9ef4f42124767f7c5071bee779851feff8d1a110f8ae2b41d2314ca286bb5876ffc3f4efa322cbdbf6aaeec3b000000000000002c032268b9e594faa613290ba5c1d49b8578c3604c040cc87265540fc93d7ed90900000058adf5dd455728697a29000000000000000000000000000000000000000000002efe3000000000000500000055e0a635b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["451","0000000000000000ec893bcbb8ed05009cc3917479d76870c546e0d88691e70d963bef9f4ea8dcc8d41d9e9b3d7767d3030004000000d22584a2605b362cf57472e920e2daef770b7cb30066e17296b934e503e121a20600000059fdb247d287d818e205cb180d1990de6377953f5ced9a2f3c39baed1b209dda07000000b8cda94e11f8f19090986db5b9ef4f42124767f7c5071bee779851feff8d1a110f8ae2b41d2314ca286bb5876ffc3f4efa322cbdbf6aaeec3b000000000000002c032268b9e594faa613290ba5c1d49b8578c3604c040cc87265540fc93d7ed90900000058adf5dd455728697a29000000000000000000000000000000000000000000002efe3000000000000500000055e0a635b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["454","00000000000000006f0d43cbb8ed05005edfece3f8b166b0084433dd2aacaa849b19d7650ad24ad93816af4cebe39a180300020000005fc46a2c71c2672d14cf5a58533cbe91df0c04c17f0f97be7a1098d01daf00cf0b0000000614c98cabe4573ea0c10d35f842b72dfb878960131660c9a9bf26755c29b9e40d0000004cff0d5516544015708da9202ebc5c162290b788166fe4fa8f823444a8009a46225e14118236c18aaac6780a1b2103b04d6f6a260952ed433c000000000000000ac24e695066907ff13c861240f973c80d42c1c4b315f22aa1f4a7ec7613e8280c000000fcc8d972caa977b36329000000000000000000000000000000000000000000002efe3000000000000500000041f14f37b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["467","000000000000000036bd4acbb8ed0500c204c9975e77ac13fdfe913112ff79ffdc2c1f3832427a78cee92c42447e17ed030000000000a020bb7a69c62664ddbbc45faa5532a71f3dd8b82e5f3bb6ff2e969d4dc7caad07000000b8cda94e11f8f19090986db5b9ef4f42124767f7c5071bee779851feff8d1a1108000000e9c616392da600c5d9d452490a8c2b6772999b9d026f071ec970954efeb31c62329e1465ff2d31987909a9bb96ffa1417d5e6739bc641cdd3b000000000000001c46e571fd4fc984c4a1014fd0331c237e35c14632b5aefddf8f6ee6d55eb3c005000000880047099442ae1a7a29000000000000000000000000000000000000000000002efe3000000000000500000064c14236b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["480","0000000000000000167a52cbb8ed05009cc3917479d76870c546e0d88691e70d963bef9f4ea8dcc8d41d9e9b3d7767d3030004000000d22584a2605b362cf57472e920e2daef770b7cb30066e17296b934e503e121a20600000059fdb247d287d818e205cb180d1990de6377953f5ced9a2f3c39baed1b209dda07000000b8cda94e11f8f19090986db5b9ef4f42124767f7c5071bee779851feff8d1a110f8ae2b41d2314ca286bb5876ffc3f4efa322cbdbf6aaeec3b000000000000002c032268b9e594faa613290ba5c1d49b8578c3604c040cc87265540fc93d7ed90900000058adf5dd455728697a29000000000000000000000000000000000000000000002efe3000000000000500000055e0a635b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["493","0000000000000000f5255acbb8ed0500a280506fc375d85e97cc8f0a65bf75ed26271f28b1de5e6cae62cbca2cca301b030000000000ed88eb6c75faede50680a13561a41938dfaf98a36d1e1f9359a1393b532fbb870e0000007c0360ade127803445c0d7dc99949f2af9ab8add3e220857f0aeacd1b69300e8100000003a78fd1ff11f3feed926993890fa1ef9e90628d1a25b0522a3a0d5b3197300b8104a109e2ca44a6929a0d2dc6d2130162c7b048aa864491c3c0000000000000005fc75ac3d13b3d3303132a71d31729076534968b203f17fe12dff53bc5b40fd0f000000662a1f088ff36ecb6329000000000000000000000000000000000000000000002dfe30000000000005000000a2f26c36b8ed05000000000000000000",true]}
+-- {"id":null,"method":"mining.notify","params":["498","0000000000000000abf25ccbb8ed05009cc3917479d76870c546e0d88691e70d963bef9f4ea8dcc8d41d9e9b3d7767d3030004000000d22584a2605b362cf57472e920e2daef770b7cb30066e17296b934e503e121a20600000059fdb247d287d818e205cb180d1990de6377953f5ced9a2f3c39baed1b209dda07000000b8cda94e11f8f19090986db5b9ef4f42124767f7c5071bee779851feff8d1a110f8ae2b41d2314ca286bb5876ffc3f4efa322cbdbf6aaeec3b000000000000002c032268b9e594faa613290ba5c1d49b8578c3604c040cc87265540fc93d7ed90900000058adf5dd455728697a29000000000000000000000000000000000000000000002efe3000000000000500000055e0a635b8ed05000000000000000000",true]}
+-- { "id":2, "method": "mining.subscribe", "params":["my-miner", null] }
+-- {"error":null,"id":2,"result":[[["mining.notify","40591"],["mining.set_difficulty","40592"]],"4059",6]}
+
+-- $ telnet 34.102.20.81 1917
+-- Trying 34.102.20.81...
+-- Connected to 81.20.102.34.bc.googleusercontent.com.
+-- Escape character is '^]'.
+-- { "id":1, "method": "mining.authorize", "params":["136029d4a40642de75bebca833ea150fc027e08fbedd29c943aab87810e77378", ""] }
+-- {"result":[],"error":null,"id":1}
+-- { "id":2, "method": "mining.subscribe", "params":["my-miner", null] }
+-- {"result":[null,"38ba",6],"error":null,"id":2}
+-- {"method":"mining.set_target","params":["00000000003fffffffffffffffffffffffffffffffffffffffffffffffffffff"],"id":null}
+-- {"method":"mining.notify","params":["5d4","00000000000000005e0f4de0b8ed05001d7cf6289cebdbf3b7c156796d8a2f937792ef66abd53d0b1c78d7bd00e886270300070000008cd6b42c5d486651c209224efa1953486a6641e5fa6d4b3f96212a6676cb0cab0c000000ae6e012958c9ee703c3044aafc5dfd276ead2fdedbfe328f4d65f6990ac1e8bf1100000035971bf6d4deada7c06bfdec1865b68373158a604730224ec13585746642788d6ed88c9cfbe14532b99e7d5572d7498f932bc41662f941143c000000000000005fb2d766a58fc21f61b11f9e77f0ea77200198aef10154182e4a0c0217e3ce4c020000006e1e8bbe0c3f3cd07b29000000000000000000000000000000000000000000003afe300000000000050000008176e136b8ed05000000000000000000",true],"id":null}
+-- {"method":"mining.notify","params":["5d5","0000000000000000d95e93e0b8ed050006608be04391857a960a7921209660b020ad62077e5cfadff66e70c1073e9f8c0300050000005a9d21a6bb03076830021840058fc5c96737bcd514da656bece52764c24d4aa70a00000037941034111e34be30306976d63912d1ccdfc538538d2f4c38c9d5ce19ae666a0f00000072e88ea4ffb8aa55ce46f9986a970a3d50fcf7e33d796eb1123313e5716256b55a175f9c36bdfe57c938d7b8d9b8eaab53eeb5adcc94b30c3c00000000000000fea5d9ffb9ea09369257d452cc132452cbae7039c7b812ce883ccaa8feb861c400000000db2ffb09fcbdab857b29000000000000000000000000000000000000000000003afe3000000000000500000099625c36b8ed05000000000000000000",true],"id":null}
+-- {"method":"mining.notify","params":["5d6","0000000000000000d907b2e0b8ed0500ae6e012958c9ee703c3044aafc5dfd276ead2fdedbfe328f4d65f6990ac1e8bf0300020000001d7cf6289cebdbf3b7c156796d8a2f937792ef66abd53d0b1c78d7bd00e886270b000000dd1edf2d73e77956d324d3a0ff82e1c086bfb26f890e9ad2c711be558e280e6b0d00000028092a25fd071dcbece38875460d222707cf0e05a2cf56bd1aaa9c72cc3bd0c2225e14118236c18aaac6780a1b2103b04d6f6a260952ed433c000000000000000bc09afd942ff2bed160e404647cc9f4b5df50e6dc63a1be4f72f02199b2597e0c0000003ce58106702771e66329000000000000000000000000000000000000000000003afe3000000000000500000041f14f37b8ed05000000000000000000",true],"id":null}
+-- {"method":"mining.notify","params":["5d7","0000000000000000f9940ce1b8ed0500850e84f9f0b5eaa7d95ed01a1b70302f0b04404335376cc81cc503aeaf838e02030002000000acb32cd9f5650670a8a1e38ec653e1dbc673e56ae9ca2fb462c4b52ab4c8a61a100000003e7ebc27d4af598daefb04dedee897e0aa9eacd538db87f6ebf792b472217423120000002db1e2ec9227c7da18eec7cdb384d0b76304f2913428781385cec4c0d5b538ee7ba55a342140fa689a4266949337723eb3591ffd694b3f053c00000000000000b799e1664c78958d44503032c50b256f5c2e2754d9061a7349f057a1229398a1110000004c285a3c7d86ebfd6329000000000000000000000000000000000000000000003bfe300000000000050000007014e235b8ed05000000000000000000",true],"id":null}
 

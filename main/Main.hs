@@ -251,6 +251,7 @@ data Config = Config
     , _configStratumPort :: !Port
     , _configStratumInterface :: !HostPreference
     , _configStratumDifficulty :: !Stratum.StratumDifficulty
+    , _configStratumRate :: !Natural
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -259,12 +260,12 @@ makeLenses ''Config
 defaultConfig :: Config
 defaultConfig = Config
     { _configHashRate = UnitPrefixed defaultHashRate
-    , _configNode = unsafeHostAddressFromText "localhost:1789"
-    , _configUseTls = True
-    , _configInsecure = True
+    , _configNode = unsafeHostAddressFromText "localhost:1848"
+    , _configUseTls = False
+    , _configInsecure = False
     , _configPublicKey = MinerPublicKey ""
     , _configAccount = Nothing
-    , _configThreadCount = 10
+    , _configThreadCount = 2
     , _configGenerateKey = False
     , _configLogLevel = Info
     , _configWorker = StratumWorker
@@ -272,6 +273,7 @@ defaultConfig = Config
     , _configStratumPort = 1917
     , _configStratumInterface = "*"
     , _configStratumDifficulty = Stratum.WorkDifficulty
+    , _configStratumRate = 1000
     }
 
 instance ToJSON Config where
@@ -290,6 +292,7 @@ instance ToJSON Config where
         , "stratumPort" .= _configStratumPort c
         , "stratumInterface" .= _configStratumInterface c
         , "stratumDifficulty" .= _configStratumDifficulty c
+        , "stratumRate" .= _configStratumRate c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -308,6 +311,7 @@ instance FromJSON (Config -> Config) where
         <*< configStratumPort ..: "stratumPort" % o
         <*< configStratumInterface ..: "stratumInterface" % o
         <*< configStratumDifficulty ..: "stratumDifficulty" % o
+        <*< configStratumRate ..: "stratumRate" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -367,6 +371,10 @@ parseConfig = id
     <*< configStratumDifficulty .:: option (textReader Stratum.stratumDifficultyFromText)
       % long "stratum-difficulty"
       <> help "How the difficulty for stratum mining shares is choosen. Possible values are \"block\" for using the block target of the most most recent notification of new work, or number between 0 and 256 for specifiying a fixed difficulty as logarithm of base 2 (number of leading zeros)."
+    <*< configStratumRate .:: option auto
+        % short 's'
+        <> long "stratum-rate"
+        <> help "Rate (in milliseconds) at which a stratum worker thread emits jobs."
 
 -- -------------------------------------------------------------------------- --
 -- HTTP Retry Logic
@@ -816,5 +824,6 @@ run conf logger = do
           (_configStratumPort conf)
           (_configStratumInterface conf)
           (_configStratumDifficulty conf)
+          (_configStratumRate conf)
           (f . Stratum.submitWork)
 
