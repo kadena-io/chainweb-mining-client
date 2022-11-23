@@ -165,7 +165,6 @@ server on port 1917:
 chainweb-mining-client \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
     --node example.com:1848 \
-    --worker stratum \
     --stratum-port 1917
 ```
 
@@ -201,7 +200,6 @@ milliseconds at a fixed difficulty level of 50.
 chainweb-mining-client \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
     --node example.com:1848 \
-    --worker stratum \
     --stratum-port 1917 \
     --stratum-difficulty=50 \
     --stratum-rate=500 \
@@ -278,7 +276,6 @@ configuration file by adding the `--print-config` parameter
 chainweb-mining-client \
     --public-key 87ef8fdb229ad10285ae191a168ea2ec0794621a127df21e372f41fd0246e4cf \
     --node example.com:1848 \
-    --worker stratum \
     --stratum-port 1917 \
     --statum-difficulty=50
     --print-config > config.yml

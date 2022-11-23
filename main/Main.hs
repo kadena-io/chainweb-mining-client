@@ -260,9 +260,9 @@ makeLenses ''Config
 defaultConfig :: Config
 defaultConfig = Config
     { _configHashRate = UnitPrefixed defaultHashRate
-    , _configNode = unsafeHostAddressFromText "localhost:1789"
-    , _configUseTls = True
-    , _configInsecure = True
+    , _configNode = unsafeHostAddressFromText "localhost:1848"
+    , _configUseTls = False
+    , _configInsecure = False
     , _configPublicKey = MinerPublicKey ""
     , _configAccount = Nothing
     , _configThreadCount = 2

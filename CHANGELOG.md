@@ -7,6 +7,9 @@
     client.
 
 *   Change default value for thread count to 2.
+*   Change default to connect to chainweb-node over an unsecure connection.
+*   Change default to require valid certificates when TLS is enabled.
+*   Change default chainweb-node host address to use port 1848.
 
 ## 0.4 -- 2021-11-29
 
