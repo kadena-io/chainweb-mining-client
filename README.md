@@ -63,7 +63,7 @@ Usage: chainweb-mining-client [--info] [--long-info] [-v|--version] [--license]
                               [-w|--worker cpu|external|simulation|stratum]
                               [--external-worker-cmd ARG] [--stratum-port ARG]
                               [--stratum-interface ARG]
-                              [--stratum-difficulty ARG]
+                              [--stratum-difficulty ARG] [-s|--stratum-rate ARG]
 
   Kadena Chainweb Mining Client
 
@@ -112,6 +112,8 @@ Available options:
                            new work, or number between 0 and 256 for specifiying
                            a fixed difficulty as logarithm of base 2 (number of
                            leading zeros).
+  -s,--stratum-rate ARG    Rate (in milliseconds) at which a stratum worker
+                           thread emits jobs.
 
 Configurations are loaded in order from the following sources:
   1. Configuration files from locations provided through --config-file options
@@ -173,7 +175,7 @@ pool address that is used to configure the ASIC miner is
 
 One can point more than a single ASIC miner to the same chainweb-mining-client
 stratum server. All connected clients work together and all mining rewards are
-credited to the same account, that is configured in the Chainweb node.
+credited to the same account, that is configured in chainweb node.
 
 By default the stratum server sets the difficulty of the work that is sent to
 the mining clients to the actual difficulty of the block of the most recent
@@ -185,7 +187,15 @@ accepted solutions qualify as solved blocks, but ASIC miner may provide a more
 continuous feedback on its current performance. Some devices may also be more
 efficient in this mode an yield higher returns.
 
-The following command runs a miner at a fixed difficulty level:
+The thread count determines how many independent stratum works are used to
+concurrently provide work to the clients. Each stratum worker receives one work
+header at a time from the chainweb-node mining API and emits jobs for that work
+to all clients at a configurable rate. The effective rate of jobs is higher than
+then configured rate because when upstream work gets preempted. Each client
+receives are all jobs from all workers.
+
+The following command runs two stratum workers that serve jobs at least every 500
+milliseconds at a fixed difficulty level of 50.
 
 ```
 chainweb-mining-client \
@@ -193,19 +203,27 @@ chainweb-mining-client \
     --node example.com:1848 \
     --worker stratum \
     --stratum-port 1917 \
-    --statum-difficulty=50
+    --stratum-difficulty=50 \
+    --stratum-rate=500 \
+    --thread-count=2
 ```
+
+The solution space for each mining job is about 280 terra hashes. The
+`--stratum-rate` should be chosen such that the mining devices does not perform
+more than that number of hashes within the provided time range. For instance,
+for an miner that performs 140TH/s the `--stratum-rate` should be at least 2000
+(2 seconds).
 
 The `--stratum-difficulty` parameter expects a integral number between 0 and
 256. It denotes the difficulty as a logarithm of base 2. In practice the actual
 target uses a difficulty level of at least 42 and at most the difficulty of
 block of the current work.
 
-It may help to experiment a little with the `--stratum-difficulty` and the
-`--thread-count` parameters. We found, that small values for `--thread-count`
-and moderate values for `--stratum-difficulty` (in the upper forties / lower
-fifties) yielded good results. But that may differ between different devices and
-setups.
+It may help to experiment a little with the `--stratum-difficulty`,
+`--stratum-rate`, and the `--thread-count` parameters. We found, that small
+values for `--thread-count` (one to three) and moderate values for
+`--stratum-difficulty` (in the upper forties / lower fifties) yielded good
+results. The But that may differ between different devices and setups.
 
 If the chainweb-node mining API is served via a reverse proxy with TLS the
 `--tls` flag must be used to enable HTTPS.
