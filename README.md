@@ -20,6 +20,7 @@ A mining client for Kadena's chainweb node mining API. It supports
     *  [CPU Mining](#cpu-mining)
     *  [GPU Mining](#gpu-mining)
     *  [Creating a Configuration File](#creating-a-configuration-file)
+*   [Related Resources](#related-resources)
 
 ## Installation
 
@@ -142,7 +143,8 @@ private: 64ef6379db5ef6004aff98182688c6e8b4a5229e706f1ccf6a73b05b1432aedf
 
 ### Mining on Mainnet With an ASIC
 
-chainweb-mining-client needs access to the mining API of a full Chainweb node in
+chainweb-mining-client needs access to the mining API of a full [Chainweb
+node](https://github.com/kadena-io/chainweb-node) in
 the Kadena Mainnet. The node must be configured to enable the mining API with
 the Pact *public* key (and, optionally, account name) of the miner. Rewards for
 mined blocks will be credited to that account. The default is to use the `k:`
@@ -288,3 +290,11 @@ The configuration can then be used via
 ```sh
 chainweb-mining-client --config-file config.yml
 ```
+
+## Related Resources
+
+*   [Chainweb Node Project Page](https://github.com/kadena-io/chainweb-node)
+*   [Kadena Stratum Protocol](https://gist.github.com/mightybyte/f1567c2bec0380539c638225fb8c1cf4)
+*   [mining API of chainweb-node](https://api.chainweb.com/openapi/#tag/mining)
+*   [work header format](https://github.com/kadena-io/chainweb-node/wiki/Block-Header-Binary-Encoding#work-header-binary-format).
+*   [mining API wiki](https://github.com/kadena-io/chainweb-node/wiki/Mining-API).
