@@ -1,5 +1,18 @@
 # Revision history for chainweb-mining-client
 
+## 0.5 -- 2022-11-23
+
+*   Add `--stratum-rate` option, which specifies the mining rate (in
+    milliseconds) at which each worker thread emits new mining jobs to the
+    client.
+
+*   Change default value for thread count to 2.
+
+## 0.4 -- 2021-11-29
+
+*   Add `--account` command line option for specifying the mining account. The
+    default value is public miner key prefix with `:k` (k-account).
+
 ## 0.3 -- 2021-11-10
 
 *   Add stratum server (#9)

@@ -13,7 +13,7 @@ description:
 
     All other mining modes (GPU, CPU, and simulation) are intended only for testing.
 
-version: 0.3
+version: 0.5
 synopsis: Mining Client for Kadena Chainweb
 homepage: https://github.com/kadena-io/chainweb-mining-client
 bug-reports: https://github.com/kadena-io/chainweb-mining-client/issues
