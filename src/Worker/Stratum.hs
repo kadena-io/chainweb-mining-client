@@ -72,7 +72,7 @@ submitWork ctx l nonce trg work = withLogTag l "Stratum Worker" $ \logger ->
     in run work
   where
     jobRateMicros :: Integral a => a
-    jobRateMicros = 500_000
+    jobRateMicros = 1000 * fromIntegral (_ctxRate ctx)
 
     waitForFirst :: IO Work -> IO Work -> IO Work
     waitForFirst a b = race a b >>= \case

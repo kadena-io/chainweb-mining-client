@@ -42,6 +42,8 @@ import qualified Data.Text as T
 
 import Network.HostAddress
 
+import Numeric.Natural
+
 import qualified Streaming.Prelude as S
 
 import System.Clock
@@ -186,15 +188,21 @@ data StratumServerCtx = StratumServerCtx
         -- ^ Ticket counter for job ids.
 
     , _ctxDifficulty :: !StratumDifficulty
+
+    , _ctxRate :: !Natural
+        -- ^ Rate in milliseconds at which a jobs for a given work item are
+        -- emitted. Note that each indiviual stratum worker will emit jobs at
+        -- this rate.
     }
 
-newStratumServerCtx :: StratumDifficulty -> IO StratumServerCtx
-newStratumServerCtx spec = StratumServerCtx
+newStratumServerCtx :: StratumDifficulty -> Natural -> IO StratumServerCtx
+newStratumServerCtx spec rate = StratumServerCtx
     (\_ _ -> return (Right ()))
     <$> newTVarIO mempty
     <*> newTVarIO noopJob
     <*> newIORef noJobId
     <*> pure spec
+    <*> pure rate
 
 -- -------------------------------------------------------------------------- --
 -- Sessions
@@ -615,10 +623,11 @@ withStratumServer
     -> Port
     -> HostPreference
     -> StratumDifficulty
+    -> Natural
     -> (StratumServerCtx -> IO ())
     -> IO ()
-withStratumServer l port host spec inner = withLogTag l "Stratum Server" $ \logger -> do
-    ctx <- newStratumServerCtx spec
+withStratumServer l port host spec rate inner = withLogTag l "Stratum Server" $ \logger -> do
+    ctx <- newStratumServerCtx spec rate
     race (server logger ctx) (inner ctx) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
         Right _ -> do
