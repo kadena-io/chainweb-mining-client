@@ -39,7 +39,7 @@ source-repository head
 custom-setup
     setup-depends:
           base >=4.10 && <5
-        , Cabal >=3.0
+        , Cabal >=3.0 && <4
         , configuration-tools >=0.5
 
 executable chainweb-mining-client
