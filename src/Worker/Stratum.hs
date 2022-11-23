@@ -68,12 +68,12 @@ import Worker.Stratum.Server
 submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
 submitWork ctx l nonce trg work = withLogTag l "Stratum Worker" $ \logger ->
     let run w = waitForFirst
-            (runJob ctx logger nonce trg work)
+            (runJob ctx logger nonce trg w)
             (threadDelay jobRateMicros >> run (incrementTimeMicros jobRateMicros w))
     in run work
   where
     jobRateMicros :: Integral a => a
-    jobRateMicros = 250_000
+    jobRateMicros = 500_000
 
     waitForFirst :: IO Work -> IO Work -> IO Work
     waitForFirst a b = race a b >>= \case
