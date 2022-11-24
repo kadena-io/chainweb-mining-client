@@ -1,40 +1,31 @@
-{ compiler ? "ghc8104"
-, rev      ? "7e9b0dff974c89e070da1ad85713ff3c20b0ca97"
-, sha256   ? "1ckzhh24mgz6jd1xhfgx0i9mijk6xjqxwsshnvq789xsavrmsc36"
+{ compiler ? "ghc8107"
+, rev      ? "7a94fcdda304d143f9a40006c033d7e190311b54"
+, sha256   ? "0d643wp3l77hv2pmg2fi7vyxn4rwy0iyr8djcw1h5x72315ck9ik"
 , pkgs     ?
     import (builtins.fetchTarball {
       url    = "https://github.com/NixOS/nixpkgs/archive/${rev}.tar.gz";
       inherit sha256; }) {
-      config.allowBroken = false;
+      config.allowBroken = false; # autodocodec
       config.allowUnfree = true;
     }
+, mkDerivation ? null
 }:
 let gitignoreSrc = import (pkgs.fetchFromGitHub {
       owner = "hercules-ci";
       repo = "gitignore";
-      rev = "2ced4519f865341adcb143c5d668f955a2cb997f";
-      sha256 = "0fc5bgv9syfcblp23y05kkfnpgh3gssz6vn24frs8dzw39algk2z";
+      rev = "9e80c4d83026fa6548bc53b1a6fab8549a6991f6";
+      sha256 = "04n9chlpbifgc5pa3zx6ff3rji9am6msrbn1z3x1iinjz2xjfp4p";
     }) {};
-
 in
-pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.dontCheck (pkgs.haskell.packages.${compiler}.developPackage {
+pkgs.haskell.packages.${compiler}.developPackage {
   name = builtins.baseNameOf ./.;
   root = gitignoreSrc.gitignoreSource ./.;
 
   overrides = self: super: with pkgs.haskell.lib; {
-    # Don't run a package's test suite
-    # foo = dontCheck super.foo;
-    #
-    # Don't enforce package's version constraints
-    # bar = doJailbreak super.bar;
-    #
-    # Get a specific hackage version straight from hackage. Unlike the above
-    # callHackage approach, this will always succeed if the version is on
-    # hackage. The downside is that you have to specify the hash manually.
     configuration-tools = self.callHackageDirect {
       pkg = "configuration-tools";
-      ver = "0.6.0";
-      sha256 = "0ia2bhy35qv1xgbqrx0jalxznj8zgg97y0zkp8cnr1r3pq5adbcd";
+      ver = "0.6.1";
+      sha256 = "0vrml1gj6bb5f6x79m80k9wqn5qvjjzz8c6gf36mqwdqv30irxdv";
     } {};
 
     streaming-events = doJailbreak (self.callHackageDirect {
@@ -43,22 +34,10 @@ pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.dontCheck (pkgs.haskell.packages.
       sha256 = "11v9rrhvlxlq43m5pw63hdfn6n0fkqryphvplild1y920db96wk9";
     } {});
 
-    # To discover more functions that can be used to modify haskell
-    # packages, run "nix-repl", type "pkgs.haskell.lib.", then hit
-    # <TAB> to get a tab-completed list of functions.
+    autodocodec = markUnbroken super.autodocodec;
+    validity-aeson = markUnbroken super.validity-aeson;
   };
   source-overrides = {
-    # Use a specific hackage version using callHackage. Only works if the
-    # version you want is in the version of all-cabal-hashes that you have.
-    # bytestring = "0.10.8.1";
-    #
-    # Use a particular commit from github
-    # parsec = pkgs.fetchFromGitHub
-    #   { owner = "hvr";
-    #     repo = "parsec";
-    #     rev = "c22d391c046ef075a6c771d05c612505ec2cd0c3";
-    #     sha256 = "0phar79fky4yzv4hq28py18i4iw779gp5n327xx76mrj7yj87id3";
-    #   };
   };
   modifier = drv: pkgs.haskell.lib.overrideCabal drv (attrs: {
     buildTools = (attrs.buildTools or []) ++ [
@@ -66,4 +45,4 @@ pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.dontCheck (pkgs.haskell.packages.
       pkgs.haskell.packages.${compiler}.ghcid
     ];
   });
-}))
+}
