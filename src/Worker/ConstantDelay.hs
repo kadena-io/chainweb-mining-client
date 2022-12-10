@@ -1,0 +1,47 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+-- |
+-- Module: Worker.Simulation
+-- Copyright: Copyright © 2020 Kadena LLC.
+-- License: MIT
+-- Maintainer: Lars Kuhtz <lars@kadena.io>
+-- Stability: experimental
+--
+-- Simulation Mining Worker
+--
+-- A fake mining worker that is not actually doing any work. It calculates the
+-- solve time base on the assumed hash power of the worker thread and returns
+-- the work bytes unchanged after that time has passed.
+--
+module Worker.ConstantDelay (constantDelayWorker) where
+
+import Control.Concurrent (threadDelay)
+
+import qualified Data.Text as T
+
+import Numeric.Natural
+
+import System.LogLevel
+
+-- internal modules
+
+import Logger
+import Worker
+
+-- -------------------------------------------------------------------------- --
+-- Simulation Mining Worker
+
+-- | A fake mining worker that is not actually doing any work. It returns
+-- the work bytes unchanged after a configured time delay passes.
+--
+constantDelayWorker :: Logger -> Natural -> Worker
+constantDelayWorker logger delay _nonce _target work = do
+    logg Info $ "solve time (seconds): " <> T.pack (show delay)
+    threadDelay (1_000000 * fromIntegral delay)
+    return work
+  where
+    logg = writeLog logger
+

@@ -86,6 +86,7 @@ import Text.Read (Read(..), readListPrecDefault)
 import Utils
 import Logger
 import Worker
+import Worker.ConstantDelay
 import Worker.CPU
 import Worker.External
 import Worker.Simulation
@@ -203,6 +204,7 @@ data WorkerConfig
     | ExternalWorker
     | SimulationWorker
     | StratumWorker
+    | ConstantDelayWorker
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (Hashable)
 
@@ -220,6 +222,7 @@ workerConfigToText CpuWorker = "cpu"
 workerConfigToText ExternalWorker = "external"
 workerConfigToText SimulationWorker = "simulation"
 workerConfigToText StratumWorker = "stratum"
+workerConfigToText ConstantDelayWorker = "constant-delay"
 
 workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
 workerConfigFromText t = case T.toCaseFold t of
@@ -227,6 +230,7 @@ workerConfigFromText t = case T.toCaseFold t of
     "external" -> return ExternalWorker
     "simulation" -> return SimulationWorker
     "stratum" -> return StratumWorker
+    "constant-delay" -> return ConstantDelayWorker
     _ -> throwM $ FromTextException $ "unknown worker configuraton: " <> t
 
 -- -------------------------------------------------------------------------- --
@@ -252,6 +256,7 @@ data Config = Config
     , _configStratumInterface :: !HostPreference
     , _configStratumDifficulty :: !Stratum.StratumDifficulty
     , _configStratumRate :: !Natural
+    , _configBlockTime :: !Natural
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -274,6 +279,7 @@ defaultConfig = Config
     , _configStratumInterface = "*"
     , _configStratumDifficulty = Stratum.WorkDifficulty
     , _configStratumRate = 1000
+    , _configBlockTime = 30
     }
 
 instance ToJSON Config where
@@ -293,6 +299,7 @@ instance ToJSON Config where
         , "stratumInterface" .= _configStratumInterface c
         , "stratumDifficulty" .= _configStratumDifficulty c
         , "stratumRate" .= _configStratumRate c
+        , "blockTime" .= _configBlockTime c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -312,6 +319,7 @@ instance FromJSON (Config -> Config) where
         <*< configStratumInterface ..: "stratumInterface" % o
         <*< configStratumDifficulty ..: "stratumDifficulty" % o
         <*< configStratumRate ..: "stratumRate" % o
+        <*< configBlockTime ..: "blockTime" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -358,7 +366,7 @@ parseConfig = id
         % short 'w'
         <> long "worker"
         <> help "The type of mining worker that is used"
-        <> metavar "cpu|external|simulation|stratum"
+        <> metavar "cpu|external|simulation|stratum|constant-delay"
     <*< configExternalWorkerCommand .:: option (textReader $ Right . T.unpack)
         % long "external-worker-cmd"
         <> help "command that is used to call an external worker. When the command is called the target value is added as last parameter to the command line."
@@ -375,6 +383,9 @@ parseConfig = id
         % short 's'
         <> long "stratum-rate"
         <> help "Rate (in milliseconds) at which a stratum worker thread emits jobs."
+    <*< configBlockTime .:: option auto
+        % long "block-time"
+        <> help "time at which a constant-delay worker emits blocks"
 
 -- -------------------------------------------------------------------------- --
 -- HTTP Retry Logic
@@ -537,8 +548,8 @@ getJob conf ver mgr = do
 postSolved :: Config -> ChainwebVersion -> Logger -> HTTP.Manager -> Work -> IO ()
 postSolved conf ver logger mgr (Work bytes) = retryHttp logger $ do
     logg Info "post solved worked"
-    (void $ HTTP.httpLbs req mgr)
-        `catch` \(e@(HTTP.HttpExceptionRequest _ _)) -> do
+    void (HTTP.httpLbs req mgr)
+        `catch` \e@(HTTP.HttpExceptionRequest _ _) -> do
             logg Error $ "failed to submit solved work: " <> sshow e
             return ()
   where
@@ -817,6 +828,8 @@ run conf logger = do
         SimulationWorker -> do
             rng <- MWC.createSystemRandom
             f $ \l -> simulationWorker l rng workerRate
+        ConstantDelayWorker -> do
+            f $ \l -> constantDelayWorker l (_configBlockTime conf)
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256
         StratumWorker -> Stratum.withStratumServer
