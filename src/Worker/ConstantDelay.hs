@@ -4,17 +4,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Simulation
--- Copyright: Copyright © 2020 Kadena LLC.
+-- Module: Worker.ConstantDelay
+-- Copyright: Copyright © 2022 Kadena LLC.
 -- License: MIT
--- Maintainer: Lars Kuhtz <lars@kadena.io>
+-- Maintainer: Edmund Noble <edmund@kadena.io>
 -- Stability: experimental
 --
 -- Simulation Mining Worker
 --
--- A fake mining worker that is not actually doing any work. It calculates the
--- solve time base on the assumed hash power of the worker thread and returns
--- the work bytes unchanged after that time has passed.
+-- A fake mining worker that is not actually doing any work.
+-- It returns the work bytes unchanged after a constant delay has passed.
 --
 module Worker.ConstantDelay (constantDelayWorker) where
 
