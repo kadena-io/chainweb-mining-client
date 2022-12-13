@@ -256,7 +256,7 @@ data Config = Config
     , _configStratumInterface :: !HostPreference
     , _configStratumDifficulty :: !Stratum.StratumDifficulty
     , _configStratumRate :: !Natural
-    , _configBlockTime :: !Natural
+    , _configConstantDelayBlockTime :: !Natural
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -279,7 +279,7 @@ defaultConfig = Config
     , _configStratumInterface = "*"
     , _configStratumDifficulty = Stratum.WorkDifficulty
     , _configStratumRate = 1000
-    , _configBlockTime = 30
+    , _configConstantDelayBlockTime = 30
     }
 
 instance ToJSON Config where
@@ -299,7 +299,7 @@ instance ToJSON Config where
         , "stratumInterface" .= _configStratumInterface c
         , "stratumDifficulty" .= _configStratumDifficulty c
         , "stratumRate" .= _configStratumRate c
-        , "blockTime" .= _configBlockTime c
+        , "constantDelayBlockTime" .= _configConstantDelayBlockTime c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -319,7 +319,7 @@ instance FromJSON (Config -> Config) where
         <*< configStratumInterface ..: "stratumInterface" % o
         <*< configStratumDifficulty ..: "stratumDifficulty" % o
         <*< configStratumRate ..: "stratumRate" % o
-        <*< configBlockTime ..: "blockTime" % o
+        <*< configConstantDelayBlockTime ..: "constantDelayBlockTime" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -383,8 +383,8 @@ parseConfig = id
         % short 's'
         <> long "stratum-rate"
         <> help "Rate (in milliseconds) at which a stratum worker thread emits jobs."
-    <*< configBlockTime .:: option auto
-        % long "block-time"
+    <*< configConstantDelayBlockTime .:: option auto
+        % long "constant-delay-block-time"
         <> help "time at which a constant-delay worker emits blocks"
 
 -- -------------------------------------------------------------------------- --
@@ -829,7 +829,7 @@ run conf logger = do
             rng <- MWC.createSystemRandom
             f $ \l -> simulationWorker l rng workerRate
         ConstantDelayWorker -> do
-            f $ \l -> constantDelayWorker l (_configBlockTime conf)
+            f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf)
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256
         StratumWorker -> Stratum.withStratumServer
