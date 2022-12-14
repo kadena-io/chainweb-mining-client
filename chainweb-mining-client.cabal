@@ -52,6 +52,7 @@ executable chainweb-mining-client
         Target
         Utils
         Worker
+        Worker.ConstantDelay
         Worker.CPU
         Worker.External
         Worker.Simulation

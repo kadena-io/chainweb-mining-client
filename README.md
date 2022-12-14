@@ -60,10 +60,11 @@ Usage: chainweb-mining-client [--info] [--long-info] [-v|--version] [--license]
                               [-c|--thread-count ARG]
                               [--generate-key | --no-generate-key]
                               [-l|--log-level error|warn|info|debug]
-                              [-w|--worker cpu|external|simulation|stratum]
+                              [-w|--worker cpu|external|simulation|stratum|constant-delay]
                               [--external-worker-cmd ARG] [--stratum-port ARG]
                               [--stratum-interface ARG]
                               [--stratum-difficulty ARG] [-s|--stratum-rate ARG]
+                              [--constant-delay-block-time ARG]
 
   Kadena Chainweb Mining Client
 
@@ -98,7 +99,7 @@ Available options:
   -l,--log-level error|warn|info|debug
                            Level at which log messages are written to the
                            console
-  -w,--worker cpu|external|simulation|stratum
+  -w,--worker cpu|external|simulation|stratum|constant-delay
                            The type of mining worker that is used
   --external-worker-cmd ARG
                            command that is used to call an external worker. When
@@ -114,6 +115,8 @@ Available options:
                            leading zeros).
   -s,--stratum-rate ARG    Rate (in milliseconds) at which a stratum worker
                            thread emits jobs.
+  --constant-delay-block-time ARG
+                           time at which a constant-delay worker emits blocks
 
 Configurations are loaded in order from the following sources:
   1. Configuration files from locations provided through --config-file options
