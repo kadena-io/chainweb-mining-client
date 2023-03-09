@@ -6,7 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Simulation
+-- Module: Worker.Fake.Miner
 -- Copyright: Copyright © 2020 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -18,10 +18,10 @@
 -- solve time base on the assumed hash power of the worker thread and returns
 -- the work bytes unchanged after that time has passed.
 --
-module Worker.Simulation
+module Worker.Fake.Miner
 ( HashRate(..)
 , defaultHashRate
-, simulationWorker
+, simulatedMinerWorker
 ) where
 
 import Control.Concurrent (threadDelay)
@@ -53,14 +53,14 @@ defaultHashRate :: HashRate
 defaultHashRate = 1_000_000
 
 -- -------------------------------------------------------------------------- --
--- Simulation Mining Worker
+-- Simulated Mining Worker
 
 -- | A fake mining worker that is not actually doing any work. It calculates the
 -- solve time base on the assumed hash power of the worker thread and returns
 -- the work bytes unchanged after that time has passed.
 --
-simulationWorker :: Logger -> MWC.GenIO -> HashRate -> Worker
-simulationWorker logger rng rate _nonce (Target targetNat) work = do
+simulatedMinerWorker :: Logger -> MWC.GenIO -> HashRate -> Worker
+simulatedMinerWorker logger rng rate _nonce (Target targetNat) work = do
     delay <- round <$> MWC.exponential scale rng
     logg Info $ "solve time (microseconds): " <> T.pack (show delay)
     threadDelay delay

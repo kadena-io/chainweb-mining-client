@@ -86,10 +86,11 @@ import Text.Read (Read(..), readListPrecDefault)
 import Utils
 import Logger
 import Worker
-import Worker.ConstantDelay
 import Worker.CPU
 import Worker.External
-import Worker.Simulation
+import Worker.Fake.ConstantDelay
+import Worker.Fake.Miner
+import Worker.Fake.OnDemand
 import qualified Worker.Stratum as Stratum
 import qualified Worker.Stratum.Server as Stratum
 
@@ -202,9 +203,10 @@ instance ToJSON Miner where
 data WorkerConfig
     = CpuWorker
     | ExternalWorker
-    | SimulationWorker
     | StratumWorker
-    | ConstantDelayWorker
+    | FakeOnDemandWorker
+    | FakeMinerWorker
+    | FakeConstantDelayWorker
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (Hashable)
 
@@ -220,17 +222,19 @@ instance FromJSON WorkerConfig where
 workerConfigToText :: WorkerConfig -> T.Text
 workerConfigToText CpuWorker = "cpu"
 workerConfigToText ExternalWorker = "external"
-workerConfigToText SimulationWorker = "simulation"
 workerConfigToText StratumWorker = "stratum"
-workerConfigToText ConstantDelayWorker = "constant-delay"
+workerConfigToText FakeMinerWorker = "simulation"
+workerConfigToText FakeConstantDelayWorker = "constant-delay"
+workerConfigToText FakeOnDemandWorker = "on-demand"
 
 workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
 workerConfigFromText t = case T.toCaseFold t of
     "cpu" -> return CpuWorker
     "external" -> return ExternalWorker
-    "simulation" -> return SimulationWorker
     "stratum" -> return StratumWorker
-    "constant-delay" -> return ConstantDelayWorker
+    "simulation" -> return FakeMinerWorker
+    "constant-delay" -> return FakeConstantDelayWorker
+    "on-demand" -> return FakeOnDemandWorker
     _ -> throwM $ FromTextException $ "unknown worker configuraton: " <> t
 
 -- -------------------------------------------------------------------------- --
@@ -256,6 +260,8 @@ data Config = Config
     , _configStratumInterface :: !HostPreference
     , _configStratumDifficulty :: !Stratum.StratumDifficulty
     , _configStratumRate :: !Natural
+    , _configOnDemandPort :: !Port
+    , _configOnDemandInterface :: !HostPreference
     , _configConstantDelayBlockTime :: !Natural
     }
     deriving (Show, Eq, Ord, Generic)
@@ -279,6 +285,8 @@ defaultConfig = Config
     , _configStratumInterface = "*"
     , _configStratumDifficulty = Stratum.WorkDifficulty
     , _configStratumRate = 1000
+    , _configOnDemandPort = 1917
+    , _configOnDemandInterface = "*"
     , _configConstantDelayBlockTime = 30
     }
 
@@ -299,6 +307,8 @@ instance ToJSON Config where
         , "stratumInterface" .= _configStratumInterface c
         , "stratumDifficulty" .= _configStratumDifficulty c
         , "stratumRate" .= _configStratumRate c
+        , "onDemandPort" .= _configOnDemandPort c
+        , "onDemandInterface" .= _configOnDemandInterface c
         , "constantDelayBlockTime" .= _configConstantDelayBlockTime c
         ]
 
@@ -319,6 +329,8 @@ instance FromJSON (Config -> Config) where
         <*< configStratumInterface ..: "stratumInterface" % o
         <*< configStratumDifficulty ..: "stratumDifficulty" % o
         <*< configStratumRate ..: "stratumRate" % o
+        <*< configOnDemandPort ..: "onDemandPort" % o
+        <*< configOnDemandInterface ..: "onDemandInterface" % o
         <*< configConstantDelayBlockTime ..: "constantDelayBlockTime" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
@@ -825,11 +837,13 @@ run conf logger = do
 
     -- provide the inner computation with an initialized worker
     withWorker f = case _configWorker conf of
-        SimulationWorker -> do
+        FakeMinerWorker -> do
             rng <- MWC.createSystemRandom
-            f $ \l -> simulationWorker l rng workerRate
-        ConstantDelayWorker -> do
+            f $ \l -> simulatedMinerWorker l rng workerRate
+        FakeConstantDelayWorker -> do
             f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf)
+        FakeOnDemandWorker -> do
+            withOnDemandWorker logger (_configOnDemandPort conf) (_configOnDemandInterface conf) f
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256
         StratumWorker -> Stratum.withStratumServer

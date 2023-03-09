@@ -52,10 +52,11 @@ executable chainweb-mining-client
         Target
         Utils
         Worker
-        Worker.ConstantDelay
         Worker.CPU
         Worker.External
-        Worker.Simulation
+        Worker.Fake.ConstantDelay
+        Worker.Fake.Miner
+        Worker.Fake.OnDemand
         Worker.Stratum
         Worker.Stratum.Protocol
         Worker.Stratum.Server
@@ -98,7 +99,9 @@ executable chainweb-mining-client
         , text >=1.2
         , time >=1.9
         , unordered-containers >=0.2
+        , wai >=3.2
         , wai-extra >=3.0
+        , warp >= 3.3
 
 test-suite tests
     type: exitcode-stdio-1.0
