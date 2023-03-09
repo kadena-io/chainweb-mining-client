@@ -60,7 +60,7 @@ defaultHashRate = 1_000_000
 -- the work bytes unchanged after that time has passed.
 --
 simulatedMinerWorker :: Logger -> MWC.GenIO -> HashRate -> Worker
-simulatedMinerWorker logger rng rate _nonce (Target targetNat) work = do
+simulatedMinerWorker logger rng rate _nonce (Target targetNat) _cid work = do
     delay <- round <$> MWC.exponential scale rng
     logg Info $ "solve time (microseconds): " <> T.pack (show delay)
     threadDelay delay

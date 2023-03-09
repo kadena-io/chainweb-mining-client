@@ -57,7 +57,7 @@ cpuWorker
   . HashAlgorithm a
   => Logger
   -> Worker
-cpuWorker logger orig@(Nonce o) trg work = do
+cpuWorker logger orig@(Nonce o) trg _cid work = do
     nonces <- newIORef 0
     !ctx <- hashMutableInit @a
     new <- BA.copy hbytes $ \buf ->

@@ -64,8 +64,8 @@ import Worker.Stratum.Server
 -- It is recommended to start several worker threads, so that there are always
 -- enough active work items available.
 --
-submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
-submitWork ctx l nonce trg work = withLogTag l "Stratum Worker" $ \logger ->
+submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> ChainId -> Work -> IO Work
+submitWork ctx l nonce trg _cid work = withLogTag l "Stratum Worker" $ \logger ->
     let run w = waitForFirst
             (runJob ctx logger nonce trg w)
             (threadDelay jobRateMicros >> run (incrementTimeMicros jobRateMicros w))

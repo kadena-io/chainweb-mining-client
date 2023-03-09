@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
@@ -33,6 +34,10 @@ module Worker
 
 -- * Nonce
 , Nonce(..)
+-- * ChainId
+, ChainId(..)
+, encodeChainId
+, decodeChainId
 
 -- * Mining Worker
 , Worker
@@ -96,9 +101,21 @@ newtype Nonce = Nonce Word64
     deriving (Eq, Ord, Generic)
     deriving newtype (Hashable)
     deriving (Show, A.ToJSON, A.FromJSON) via (IntHexText Word64)
+--
+-- | ChainId
+--
+newtype ChainId = ChainId Word32
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
+
+decodeChainId :: MonadGet m => m ChainId
+decodeChainId = ChainId <$> getWord32le
+
+encodeChainId :: MonadPut m => ChainId -> m ()
+encodeChainId (ChainId w32) = putWord32le w32
 
 -- -------------------------------------------------------------------------- --
 -- Mining Worker
 
-type Worker = Nonce -> Target -> Work -> IO Work
+type Worker = Nonce -> Target -> ChainId -> Work -> IO Work
 

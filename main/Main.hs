@@ -55,7 +55,6 @@ import Data.Maybe
 import Data.Streaming.Network
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Word
 
 import GHC.Generics
 
@@ -456,21 +455,6 @@ httpRetries (HTTP.HttpExceptionRequest _req reason) = case reason of
 httpRetries (HTTP.InvalidUrlException _url _reason) = False
 
 -- -------------------------------------------------------------------------- --
--- Chainweb Mining API Types
-
--- | ChainId
---
-newtype ChainId = ChainId Word32
-    deriving (Show, Eq, Ord, Generic)
-    deriving anyclass (Hashable)
-
-decodeChainId :: MonadGet m => m ChainId
-decodeChainId = ChainId <$> getWord32le
-
-encodeChainId :: MonadPut m => ChainId -> m ()
-encodeChainId (ChainId w32) = putWord32le w32
-
--- -------------------------------------------------------------------------- --
 -- Chainweb Mining API Requetss
 
 newtype GetWorkFailure = GetWorkFailure T.Text
@@ -777,7 +761,7 @@ miningLoop conf ver logger mgr umap worker = go
     loopBody = do
         (cid, target, work) <- getJob conf ver mgr
         logg Info $ "got new work for chain " <> sshow cid
-        withPreemption conf ver logger mgr umap cid (worker nonce target work) >>= \case
+        withPreemption conf ver logger mgr umap cid (worker nonce target cid work) >>= \case
             Right solved -> do
                 -- TODO: we should do this asynchronously, however, preemption
                 -- should still apply. So, ideally, we would kick of a new
