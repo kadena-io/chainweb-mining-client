@@ -22,10 +22,15 @@ module Worker.Fake.OnDemand (withOnDemandWorker) where
 
 import Control.Concurrent
 import Control.Concurrent.Async
+import Control.Concurrent.STM
+import Control.Monad
 import Control.Monad.Catch
 
+import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Function
+import Data.HashMap.Strict(HashMap)
+import qualified Data.HashMap.Strict as HashMap
 import Data.Streaming.Network
 import qualified Data.Text as T
 
@@ -33,6 +38,8 @@ import Network.HostAddress
 import qualified Network.Wai as Wai
 import Network.HTTP.Types
 import qualified Network.Wai.Handler.Warp as Warp
+import Web.DeepRoute
+import Web.DeepRoute.Wai
 
 import qualified System.LogLevel as L
 
@@ -48,16 +55,15 @@ withOnDemandWorker
     -> ((Logger -> Worker) -> IO ())
     -> IO ()
 withOnDemandWorker logger port host inner = do
-    mineSemaphore <- newEmptyMVar @ChainId
-    race (server mineSemaphore) (inner (worker mineSemaphore)) >>= \case
+    miningGoals <- newTVarIO (HashMap.empty @ChainId @Word)
+    race (server miningGoals) (inner (worker miningGoals)) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
         Right _ -> writeLog logger L.Error "mining loop exited unexpectedly"
   where
-    server mineSemaphore = flip finally (writeLog logger L.Info "server stopped") $
-        Warp.runSettings setts $ \req resp ->
-            if Wai.pathInfo req == ["make-block"] && Wai.requestMethod req == methodPost
-            then tryTakeMVar mineSemaphore >>= \cid -> resp (done cid)
-            else resp notFound
+    server goalsRef = flip finally (writeLog logger L.Info "server stopped") $
+        Warp.runSettings setts $ \req resp -> routeWaiApp req resp (resp notFound) $
+            choice "make-blocks" $ terminus methodPost "text/plain" $ jsonApp $
+                \newGoals -> atomically $ modifyTVar' goalsRef (HashMap.unionWith (+) newGoals)
     notFound = Wai.responseLBS notFound404 [] "The on-demand worker's only endpoint is /make-block"
     done (Just cid) = Wai.responseLBS ok200 [] (LBS8.pack $ show cid)
     done Nothing = Wai.responseLBS serviceUnavailable503 [] "not enough work to make a block"
@@ -65,8 +71,11 @@ withOnDemandWorker logger port host inner = do
         & Warp.setPort (fromIntegral port)
         & Warp.setHost host
 
-worker :: MVar ChainId -> Logger -> Worker
-worker mineSemaphore minerLogger _nonce _target cid work = do
-    putMVar mineSemaphore cid
+worker :: TVar (HashMap ChainId Word) -> Logger -> Worker
+worker goalsRef minerLogger _nonce _target cid work = do
+    atomically $ do
+        goals <- readTVar goalsRef
+        guard (any (/= 0) goals)
+        writeTVar goalsRef (HashMap.adjust (\g -> if g == 0 then 0 else pred g) cid goals)
     writeLog minerLogger L.Info $ "block demanded for chain " <> T.pack (show cid)
     return work

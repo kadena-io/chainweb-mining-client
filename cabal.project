@@ -2,3 +2,7 @@ packages: .
 allow-newer:
     streaming-events:*
 
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/deeproute.git
+    tag: 856be917bf162a769d9082c26700af4bdbb87d49

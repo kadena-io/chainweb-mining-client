@@ -106,6 +106,7 @@ newtype Nonce = Nonce Word64
 --
 newtype ChainId = ChainId Word32
     deriving (Show, Eq, Ord, Generic)
+    deriving newtype (A.FromJSONKey, A.ToJSONKey)
     deriving anyclass (Hashable)
 
 decodeChainId :: MonadGet m => m ChainId
