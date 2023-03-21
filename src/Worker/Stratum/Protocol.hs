@@ -9,6 +9,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+
 -- |
 -- Module: Worker.Stratum.Protocol
 -- Copyright: Copyright © 2021 Kadena LLC.
