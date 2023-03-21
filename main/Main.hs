@@ -285,7 +285,7 @@ defaultConfig = Config
     , _configStratumDifficulty = Stratum.WorkDifficulty
     , _configStratumRate = 1000
     , _configOnDemandPort = 1917
-    , _configOnDemandInterface = "localhost"
+    , _configOnDemandInterface = "*"
     , _configConstantDelayBlockTime = 30
     }
 
