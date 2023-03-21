@@ -101,7 +101,7 @@ executable chainweb-mining-client
         , unordered-containers >=0.2
         , wai >=3.2
         , wai-extra >=3.0
-        , warp >= 3.3
+        , warp >=3.3
 
 test-suite tests
     type: exitcode-stdio-1.0
