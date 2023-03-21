@@ -14,7 +14,7 @@
 --
 -- On-Demand Mining Worker
 --
--- A fake mining worker that is not actually doing any work. It returns the
+-- A fake mining worker that is not doing providing proof of work. It returns the
 -- work bytes unchanged after being sent an HTTP POST request to `/make-block`.
 --
 
