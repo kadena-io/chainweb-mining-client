@@ -20,7 +20,6 @@
 
 module Worker.OnDemand (withOnDemandWorker) where
 
-import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Monad
