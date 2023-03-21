@@ -5,7 +5,8 @@ A mining client for Kadena's chainweb node mining API. It supports
 * mining with ASICs through a stratum server,
 * simulated mining for testing,
 * multi threaded CPU mining,
-* external mining workers (e.g. a GPU).
+* external mining workers (e.g. a GPU),
+* timed miners for non-PoW usecases.
 
 *Competitive mining on the Kadena Mainnet requires special mining hardware
 (ASIC), which connects to a Stratum Server from where it obtains work.*
@@ -60,11 +61,12 @@ Usage: chainweb-mining-client [--info] [--long-info] [-v|--version] [--license]
                               [-c|--thread-count ARG]
                               [--generate-key | --no-generate-key]
                               [-l|--log-level error|warn|info|debug]
-                              [-w|--worker cpu|external|simulation|stratum|constant-delay]
+                              [-w|--worker cpu|external|simulation|stratum|constant-delay|on-demand]
                               [--external-worker-cmd ARG] [--stratum-port ARG]
                               [--stratum-interface ARG]
                               [--stratum-difficulty ARG] [-s|--stratum-rate ARG]
                               [--constant-delay-block-time ARG]
+                              [--on-demand-interface ARG] [--on-demand-port ARG]
 
   Kadena Chainweb Mining Client
 
@@ -99,7 +101,7 @@ Available options:
   -l,--log-level error|warn|info|debug
                            Level at which log messages are written to the
                            console
-  -w,--worker cpu|external|simulation|stratum|constant-delay
+  -w,--worker cpu|external|simulation|stratum|constant-delay|on-demand
                            The type of mining worker that is used
   --external-worker-cmd ARG
                            command that is used to call an external worker. When
@@ -117,6 +119,10 @@ Available options:
                            thread emits jobs.
   --constant-delay-block-time ARG
                            time at which a constant-delay worker emits blocks
+  --on-demand-interface ARG
+                           network interface that the on-demand mining server
+                           binds to
+  --on-demand-port ARG     port on which the on-demand mining server listens
 
 Configurations are loaded in order from the following sources:
   1. Configuration files from locations provided through --config-file options
@@ -269,6 +275,42 @@ chainweb-mining-client \
 
 The external mining tool is called by adding the target as the last command line
 parameter and passing the work bytes on stdin.
+
+### Non-PoW mining
+
+The Non-PoW mining modes ignore the PoW nonce of block headers, instead just
+returning the input block header when they "mine" a block. Naturally this makes
+their blocks invalid from the perspective of mainnet or testnet. A chainweb
+node running in development mode can disable the PoW validity check by setting
+the DISABLE_POW_VALIDATION environment variable to `1`, making these modes
+produce valid blocks.
+
+The modes are:
+    1. simulation. This mode accepts a hash rate via `--hash-rate`, for example
+       `--hash-rate 100M` and produces a block with a delay congruent with
+       running a real miner at the given hash rate, given the difficulty of the
+       block header being mined.
+
+       This mode is useful for testing difficulty adjustment, but because block
+       mining times have a long tail, it may be time consuming.
+
+    2. constant-delay. This mode accepts a delay in seconds via
+       `--constant-delay-block-time` and produces blocks at a constant rate,
+       i.e. a heartbeat, ignoring the block's difficulty.
+
+       This mode is useful for testing that does not involve PoW or difficulty
+       adjustment at all.
+
+    3. on-demand. This mode creates an HTTP server that binds to the configured
+       interface and port, and listens for a POST request to the `/make-blocks`
+       endpoint. The body is a JSON object mapping chain IDs to counts of
+       blocks to mine on those chains. The worker will only mine blocks as
+       required to mine as many blocks as have been requested and maintain the
+       braiding condition of chainweb.
+
+       This mode is useful for generating blocks just after submitting the
+       transactions that make them up, or generating empty blocks in bulk to
+       get past a certain block height and test some new behavior.
 
 ### Creating a Configuration File
 
