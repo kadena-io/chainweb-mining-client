@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Stratum
+-- Module: Worker.POW.Stratum
 -- Copyright: Copyright © 2021 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -31,7 +31,7 @@
 -- * meaning of result of submit
 -- * precise meaning notify 'clear' field
 --
-module Worker.Stratum
+module Worker.POW.Stratum
 ( submitWork
 ) where
 
@@ -53,8 +53,8 @@ import Target
 import Utils
 import Worker
 import WorkerUtils
-import Worker.Stratum.Protocol
-import Worker.Stratum.Server
+import Worker.POW.Stratum.Protocol
+import Worker.POW.Stratum.Server
 
 -- -------------------------------------------------------------------------- --
 -- Worker Interface

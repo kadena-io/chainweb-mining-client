@@ -85,13 +85,13 @@ import Text.Read (Read(..), readListPrecDefault)
 import Utils
 import Logger
 import Worker
-import Worker.CPU
+import Worker.POW.CPU
 import Worker.External
-import Worker.Fake.ConstantDelay
-import Worker.Fake.Miner
-import Worker.Fake.OnDemand
-import qualified Worker.Stratum as Stratum
-import qualified Worker.Stratum.Server as Stratum
+import Worker.ConstantDelay
+import Worker.SimulatedMiner
+import Worker.OnDemand
+import qualified Worker.POW.Stratum as Stratum
+import qualified Worker.POW.Stratum.Server as Stratum
 
 -- -------------------------------------------------------------------------- --
 -- Integral Unit Prefixes
@@ -203,9 +203,9 @@ data WorkerConfig
     = CpuWorker
     | ExternalWorker
     | StratumWorker
-    | FakeOnDemandWorker
-    | FakeMinerWorker
-    | FakeConstantDelayWorker
+    | OnDemandWorker
+    | SimulatedMinerWorker
+    | ConstantDelayWorker
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (Hashable)
 
@@ -222,18 +222,18 @@ workerConfigToText :: WorkerConfig -> T.Text
 workerConfigToText CpuWorker = "cpu"
 workerConfigToText ExternalWorker = "external"
 workerConfigToText StratumWorker = "stratum"
-workerConfigToText FakeMinerWorker = "simulation"
-workerConfigToText FakeConstantDelayWorker = "constant-delay"
-workerConfigToText FakeOnDemandWorker = "on-demand"
+workerConfigToText SimulatedMinerWorker = "simulation"
+workerConfigToText ConstantDelayWorker = "constant-delay"
+workerConfigToText OnDemandWorker = "on-demand"
 
 workerConfigFromText :: MonadThrow m => T.Text -> m WorkerConfig
 workerConfigFromText t = case T.toCaseFold t of
     "cpu" -> return CpuWorker
     "external" -> return ExternalWorker
     "stratum" -> return StratumWorker
-    "simulation" -> return FakeMinerWorker
-    "constant-delay" -> return FakeConstantDelayWorker
-    "on-demand" -> return FakeOnDemandWorker
+    "simulation" -> return SimulatedMinerWorker
+    "constant-delay" -> return ConstantDelayWorker
+    "on-demand" -> return OnDemandWorker
     _ -> throwM $ FromTextException $ "unknown worker configuraton: " <> t
 
 -- -------------------------------------------------------------------------- --
@@ -821,12 +821,12 @@ run conf logger = do
 
     -- provide the inner computation with an initialized worker
     withWorker f = case _configWorker conf of
-        FakeMinerWorker -> do
+        SimulatedMinerWorker -> do
             rng <- MWC.createSystemRandom
             f $ \l -> simulatedMinerWorker l rng workerRate
-        FakeConstantDelayWorker -> do
+        ConstantDelayWorker -> do
             f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf)
-        FakeOnDemandWorker -> do
+        OnDemandWorker -> do
             withOnDemandWorker logger (_configOnDemandPort conf) (_configOnDemandInterface conf) f
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
         CpuWorker -> f $ cpuWorker @Blake2s_256

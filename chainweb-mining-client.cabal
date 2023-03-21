@@ -52,14 +52,14 @@ executable chainweb-mining-client
         Target
         Utils
         Worker
-        Worker.CPU
         Worker.External
-        Worker.Fake.ConstantDelay
-        Worker.Fake.Miner
-        Worker.Fake.OnDemand
-        Worker.Stratum
-        Worker.Stratum.Protocol
-        Worker.Stratum.Server
+        Worker.ConstantDelay
+        Worker.OnDemand
+        Worker.POW.CPU
+        Worker.POW.Stratum
+        Worker.POW.Stratum.Protocol
+        Worker.POW.Stratum.Server
+        Worker.SimulatedMiner
         WorkerUtils
     autogen-modules:
         PkgInfo

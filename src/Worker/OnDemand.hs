@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- |
--- Module: Worker.Fake.OnDemand
+-- Module: Worker.OnDemand
 -- Copyright: Copyright © 2022 Kadena LLC.
 -- License: MIT
 -- Maintainer: Edmund Noble <edmund@kadena.io>
@@ -14,11 +14,11 @@
 --
 -- On-Demand Mining Worker
 --
--- A fake mining worker that is not doing providing proof of work. It returns the
--- work bytes unchanged after being sent an HTTP POST request to `/make-block`.
+-- A mining worker that is not doing proof of work. It returns the work bytes
+-- unchanged after being sent an HTTP POST request to `/make-block`.
 --
 
-module Worker.Fake.OnDemand (withOnDemandWorker) where
+module Worker.OnDemand (withOnDemandWorker) where
 
 import Control.Concurrent
 import Control.Concurrent.Async

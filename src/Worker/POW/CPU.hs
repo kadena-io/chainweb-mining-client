@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- |
--- Module: Worker.CPU
+-- Module: Worker.POW.CPU
 -- Copyright: Copyright © 2020 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -15,7 +15,7 @@
 --
 -- TODO
 --
-module Worker.CPU
+module Worker.POW.CPU
 ( cpuWorker
 ) where
 

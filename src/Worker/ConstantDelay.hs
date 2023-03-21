@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Fake.ConstantDelay
+-- Module: Worker.ConstantDelay
 -- Copyright: Copyright © 2022 Kadena LLC.
 -- License: MIT
 -- Maintainer: Edmund Noble <edmund@kadena.io>
@@ -12,10 +12,10 @@
 --
 -- Simulation Mining Worker
 --
--- A fake mining worker that is not actually doing any work.
+-- A mining worker that is not actually doing any work.
 -- It returns the work bytes unchanged after a constant delay has passed.
 --
-module Worker.Fake.ConstantDelay (constantDelayWorker) where
+module Worker.ConstantDelay (constantDelayWorker) where
 
 import Control.Concurrent (threadDelay)
 
@@ -33,8 +33,8 @@ import Worker
 -- -------------------------------------------------------------------------- --
 -- Simulation Mining Worker
 
--- | A fake mining worker that is not actually doing any work. It returns
--- the work bytes unchanged after a configured time delay passes.
+-- | A mining worker that is not actually doing any work. It returns the work
+-- bytes unchanged after a configured time delay passes.
 --
 constantDelayWorker :: Logger -> Natural -> Worker
 constantDelayWorker logger delay _nonce _target _cid work = do

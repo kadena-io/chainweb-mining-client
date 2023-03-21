@@ -6,7 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Fake.Miner
+-- Module: Worker.Simulated
 -- Copyright: Copyright © 2020 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -14,11 +14,11 @@
 --
 -- Simulation Mining Worker
 --
--- A fake mining worker that is not actually doing any work. It calculates the
--- solve time base on the assumed hash power of the worker thread and returns
--- the work bytes unchanged after that time has passed.
+-- A mining worker that is not actually doing any work. It calculates the solve
+-- time base on the specified hash power of the worker thread and the current
+-- difficulty and returns the work bytes unchanged after that time has passed.
 --
-module Worker.Fake.Miner
+module Worker.SimulatedMiner
 ( HashRate(..)
 , defaultHashRate
 , simulatedMinerWorker
