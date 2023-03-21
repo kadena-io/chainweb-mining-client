@@ -65,8 +65,6 @@ withOnDemandWorker logger port host inner = do
             choice "make-blocks" $ terminus methodPost "text/plain" $ jsonApp $
                 \newGoals -> atomically $ modifyTVar' goalsRef (HashMap.unionWith (+) newGoals)
     notFound = Wai.responseLBS notFound404 [] "The on-demand worker's only endpoint is /make-block"
-    done (Just cid) = Wai.responseLBS ok200 [] (LBS8.pack $ show cid)
-    done Nothing = Wai.responseLBS serviceUnavailable503 [] "not enough work to make a block"
     setts = Warp.defaultSettings
         & Warp.setPort (fromIntegral port)
         & Warp.setHost host
