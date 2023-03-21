@@ -51,9 +51,7 @@ withOnDemandWorker logger port host inner = do
     mineSemaphore <- newEmptyMVar @ChainId
     race (server mineSemaphore) (inner (worker mineSemaphore)) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
-        Right _ -> do
-            writeLog logger L.Error "mining loop existed unexpectedly"
-            return ()
+        Right _ -> writeLog logger L.Error "mining loop exited unexpectedly"
   where
     server mineSemaphore = flip finally (writeLog logger L.Info "server stopped") $
         Warp.runSettings setts $ \req resp ->
