@@ -12,7 +12,7 @@
 -- Maintainer: Edmund Noble <edmund@kadena.io>
 -- Stability: experimental
 --
--- Simulation Mining Worker
+-- On-Demand Mining Worker
 --
 -- A fake mining worker that is not actually doing any work. It returns the
 -- work bytes unchanged after being sent an HTTP POST request to `/make-block`.
