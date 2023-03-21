@@ -212,7 +212,7 @@ chainweb-mining-client \
 The solution space for each mining job is about 280 terra hashes. The
 `--stratum-rate` should be chosen such that the mining devices does not perform
 more than that number of hashes within the provided time range. For instance,
-for an miner that performs 140TH/s the `--stratum-rate` should be at least 2000
+for an miner that performs 140TH/s the `--stratum-rate` should be at most 2000 milliseconds
 (2 seconds).
 
 The `--stratum-difficulty` parameter expects a integral number between 0 and
