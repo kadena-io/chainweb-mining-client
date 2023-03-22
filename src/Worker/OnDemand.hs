@@ -25,8 +25,6 @@ import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Catch
 
-import Data.Aeson
-import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Function
 import Data.HashMap.Strict(HashMap)
 import qualified Data.HashMap.Strict as HashMap
