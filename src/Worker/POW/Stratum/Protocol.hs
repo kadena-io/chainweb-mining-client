@@ -12,7 +12,7 @@
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- |
--- Module: Worker.Stratum.Protocol
+-- Module: Worker.POW.Stratum.Protocol
 -- Copyright: Copyright © 2021 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -20,7 +20,7 @@
 --
 -- TODO
 --
-module Worker.Stratum.Protocol
+module Worker.POW.Stratum.Protocol
 (
 -- * Nonces
 
