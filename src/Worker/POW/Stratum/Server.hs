@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- |
--- Module: Worker.Stratum.Server
+-- Module: Worker.POW.Stratum.Server
 -- Copyright: Copyright © 2021 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -13,7 +13,7 @@
 --
 -- TODO
 --
-module Worker.Stratum.Server
+module Worker.POW.Stratum.Server
 ( withStratumServer
 , Job(..)
 , StratumServerCtx(..) -- TODO only expose API
@@ -61,7 +61,7 @@ import Target
 import Utils
 import Worker
 import WorkerUtils
-import Worker.Stratum.Protocol
+import Worker.POW.Stratum.Protocol
 
 -- -------------------------------------------------------------------------- --
 -- Clients and Shares

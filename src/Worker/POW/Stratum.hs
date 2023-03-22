@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module: Worker.Stratum
+-- Module: Worker.POW.Stratum
 -- Copyright: Copyright © 2021 Kadena LLC.
 -- License: MIT
 -- Maintainer: Lars Kuhtz <lars@kadena.io>
@@ -31,7 +31,7 @@
 -- * meaning of result of submit
 -- * precise meaning notify 'clear' field
 --
-module Worker.Stratum
+module Worker.POW.Stratum
 ( submitWork
 ) where
 
@@ -53,8 +53,8 @@ import Target
 import Utils
 import Worker
 import WorkerUtils
-import Worker.Stratum.Protocol
-import Worker.Stratum.Server
+import Worker.POW.Stratum.Protocol
+import Worker.POW.Stratum.Server
 
 -- -------------------------------------------------------------------------- --
 -- Worker Interface
@@ -64,8 +64,8 @@ import Worker.Stratum.Server
 -- It is recommended to start several worker threads, so that there are always
 -- enough active work items available.
 --
-submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> Work -> IO Work
-submitWork ctx l nonce trg work = withLogTag l "Stratum Worker" $ \logger ->
+submitWork :: StratumServerCtx -> Logger -> Nonce -> Target -> ChainId -> Work -> IO Work
+submitWork ctx l nonce trg _cid work = withLogTag l "Stratum Worker" $ \logger ->
     let run w = waitForFirst
             (runJob ctx logger nonce trg w)
             (threadDelay jobRateMicros >> run (incrementTimeMicros jobRateMicros w))

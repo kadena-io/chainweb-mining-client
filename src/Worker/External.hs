@@ -74,7 +74,7 @@ externalWorker
     -> String
         -- ^ worker command
     -> Worker
-externalWorker logger cmd _nonce target (Work work) =
+externalWorker logger cmd _nonce target _cid (Work work) =
     withLogTag logger "Worker" $ \workerLogger ->
         P.withCreateProcess workerProc (go workerLogger)
   where

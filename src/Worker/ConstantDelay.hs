@@ -12,7 +12,7 @@
 --
 -- Simulation Mining Worker
 --
--- A fake mining worker that is not actually doing any work.
+-- A mining worker that is not actually doing any work.
 -- It returns the work bytes unchanged after a constant delay has passed.
 --
 module Worker.ConstantDelay (constantDelayWorker) where
@@ -33,11 +33,11 @@ import Worker
 -- -------------------------------------------------------------------------- --
 -- Simulation Mining Worker
 
--- | A fake mining worker that is not actually doing any work. It returns
--- the work bytes unchanged after a configured time delay passes.
+-- | A mining worker that is not actually doing any work. It returns the work
+-- bytes unchanged after a configured time delay passes.
 --
 constantDelayWorker :: Logger -> Natural -> Worker
-constantDelayWorker logger delay _nonce _target work = do
+constantDelayWorker logger delay _nonce _target _cid work = do
     logg Info $ "solve time (seconds): " <> T.pack (show delay)
     threadDelay ((1_000000 * fromIntegral delay) `div` 20)
     return work
