@@ -508,9 +508,10 @@ parseMiningResponse pendingRequests = A.withObject "MiningResponse" $ \o -> do
         r@Submit{} -> (r,) . SubmitResponse mid <$> parseResponse o
 
   where
-    parseSubscribeParams = A.parseJSON >=> \(StaticNull, v, s) -> case nonceSize @Int s of
-        Nothing -> fail $ "invalid nonce2 size. Expected a value between 0 and 8 but got " <> show s
-        Just ns -> (, ns) <$> parseNonce1 (complementNonceSize ns) v
+    parseSubscribeParams = A.parseJSON >=> \(StaticNull, v, s) ->
+        case nonceSize @Int s of
+            Nothing -> fail $ "invalid nonce2 size. Expected a value between 0 and 8 but got " <> show s
+            Just ns -> (, ns) <$> parseNonce1 (complementNonceSize ns) v
 
     parseAuthorizeParams = A.parseJSON >=> \(T1 StaticTrue) -> return ()
 {-# INLINE parseMiningResponse #-}

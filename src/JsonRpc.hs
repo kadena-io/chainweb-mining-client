@@ -57,12 +57,15 @@ data Static (a :: k) = Static
 
 pattern StaticNull :: Static 'Nothing
 pattern StaticNull = Static
+{-# COMPLETE StaticNull #-}
 
 pattern StaticTrue :: Static 'True
 pattern StaticTrue = Static
+{-# COMPLETE StaticTrue #-}
 
 pattern StaticFalse :: Static 'False
 pattern StaticFalse = Static
+{-# COMPLETE StaticFalse #-}
 
 instance A.ToJSON (Static 'Nothing) where
     toEncoding _ = A.null_
