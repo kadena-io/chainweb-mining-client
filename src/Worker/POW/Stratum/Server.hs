@@ -4,6 +4,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+
 -- |
 -- Module: Worker.POW.Stratum.Server
 -- Copyright: Copyright © 2021 Kadena LLC.
@@ -277,7 +279,7 @@ targetPeriod :: Period
 targetPeriod = Period 10
 
 notify :: Logger -> AppData -> SessionState -> Job -> IO ()
-notify logger app sessionCtx job = do
+notify logger app _sessionCtx job = do
     writeLog logger L.Info "sending notification"
     send app $ Notify (_jobId job, _jobWork job, True) -- for now we always replace previous work
 
@@ -330,7 +332,7 @@ stratumDifficultyFromText t = case readEither @Int $ T.unpack t of
 instance A.ToJSON StratumDifficulty where
   toJSON WorkDifficulty = "block"
   toJSON (DifficultyLevel i) = A.toJSON i
-  toJSON (DifficultyPeriod i) = error "ToJSON StratumDifficulty: difficulty period is currently not supported"
+  toJSON (DifficultyPeriod _i) = error "ToJSON StratumDifficulty: difficulty period is currently not supported"
 
 instance A.FromJSON StratumDifficulty where
   parseJSON v = case v of
@@ -384,7 +386,7 @@ getNewSessionTarget stratumDifficulty currentHashRate currentTarget jobTarget
         DifficultyPeriod p -> newPeriodTarget p
 
     -- The final target must be inbetween maxSessionTarget and jobTarget
-    newPeriodTarget p = max jobTarget (min maxSessionTarget candidate)
+    newPeriodTarget _p = max jobTarget (min maxSessionTarget candidate)
       where
         curD = targetToDifficulty currentTarget
         newD = adjustDifficulty periodTolerance currentHashRate targetPeriod curD

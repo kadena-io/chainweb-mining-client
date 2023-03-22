@@ -311,7 +311,11 @@ le64 = f targetByteOrder
 
 -- | Encode to or from little endian. This is @id@ on little endian platforms.
 --
+#if MIN_VERSION_base(4,17,0)
+le64# :: Word64# -> Word64#
+#else
 le64# :: Word# -> Word#
+#endif
 le64# = f targetByteOrder
   where
     f BigEndian x = byteSwap64# x
@@ -333,9 +337,11 @@ secondsNs :: Integer -> Integer
 secondsNs i = i * 1_000_000_000
 {-# INLINE secondsNs #-}
 
+#if !MIN_VERSION_stm(2,5,1)
 writeTMVar :: TMVar a -> a -> STM ()
 writeTMVar var a = tryTakeTMVar var >> putTMVar var a
 {-# INLINE writeTMVar #-}
+#endif
 
 -- -------------------------------------------------------------------------- --
 -- BigNum Compatibility

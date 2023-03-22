@@ -32,7 +32,7 @@ import Configuration.Utils hiding (Error)
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
-import Control.Exception (IOException, SomeAsyncException)
+import Control.Exception (IOException, SomeAsyncException, throwIO)
 import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.Monad.Catch
@@ -551,9 +551,11 @@ postSolved :: Config -> ChainwebVersion -> Logger -> HTTP.Manager -> Work -> IO 
 postSolved conf ver logger mgr (Work bytes) = retryHttp logger $ do
     logg Info "post solved worked"
     void (HTTP.httpLbs req mgr)
-        `catch` \e@(HTTP.HttpExceptionRequest _ _) -> do
-            logg Error $ "failed to submit solved work: " <> sshow e
-            return ()
+        `catch` \case
+            e@(HTTP.HttpExceptionRequest _ _) -> do
+                logg Error $ "failed to submit solved work: " <> sshow e
+                return ()
+            e -> throwIO e
   where
     logg = writeLog logger
     req = (baseReq conf ver "mining/solved")

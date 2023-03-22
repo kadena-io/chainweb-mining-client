@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.10.7', '9.0.2', '9.2']
+        ghc: ['8.10.7', '9.0.2', '9.2', '9.4']
         cabal: ['3.8']
         os: ['ubuntu-20.04', 'ubuntu-22.04', 'macOS-latest']
 
@@ -31,7 +31,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
     - name: Install GHC and Cabal
-      uses: haskell/actions/setup@v2.0.2
+      uses: haskell/actions/setup@v2
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
@@ -145,7 +145,7 @@ jobs:
 
     - name: Docker meta
       id: meta
-      uses: docker/metadata-action@v3
+      uses: docker/metadata-action@v4
       with:
         images: ghcr.io/kadena-io/chainweb-mining-client
         tags: |
@@ -163,7 +163,7 @@ jobs:
 
     - name: Build and push
       id: docker_build
-      uses: docker/build-push-action@v2
+      uses: docker/build-push-action@v4
       with:
         push: true
         context: .
