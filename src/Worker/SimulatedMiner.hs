@@ -40,6 +40,7 @@ import qualified System.Random.MWC.Distributions as MWC
 
 import Logger
 import Worker
+import WorkerUtils
 
 -- -------------------------------------------------------------------------- --
 -- HashRate
@@ -59,12 +60,17 @@ defaultHashRate = 1_000_000
 -- solve time base on the assumed hash power of the worker thread and returns
 -- the work bytes unchanged after that time has passed.
 --
-simulatedMinerWorker :: Logger -> MWC.GenIO -> HashRate -> Worker
-simulatedMinerWorker logger rng rate _nonce (Target targetNat) _cid work = do
+simulatedMinerWorker
+    :: Logger
+    -> MWC.GenIO
+    -> HashRate
+    -> Maybe BlockAuthenticationKey
+    -> Worker
+simulatedMinerWorker logger rng rate key _nonce (Target targetNat) _cid work = do
     delay <- round <$> MWC.exponential scale rng
     logg Info $ "solve time (microseconds): " <> T.pack (show delay)
     threadDelay delay
-    return work
+    return $! authenticateWork key work
   where
     logg = writeLog logger
 

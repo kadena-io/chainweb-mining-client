@@ -562,8 +562,8 @@ session l ctx app = withLogTag l "Stratum Session" $ \l2 -> withLogTag l2 (sshow
 
                     let n = composeNonce (_sessionNonce1 sessionCtx) n2
 
-                    -- Check if share is valid (matches share target)
-                    finalWork <- injectNonce n (_jobWork job)
+                        -- Check if share is valid (matches share target)
+                        finalWork = injectNonce n (_jobWork job)
 
                     -- we make sure that we never reject shares that solved a block!
                     -- (this add a little bit of skew to the share computation but everybody

@@ -44,16 +44,18 @@ import qualified System.LogLevel as L
 
 import Logger
 import Worker
+import WorkerUtils
 
 withOnDemandWorker
     :: Logger
     -> Port
     -> HostPreference
+    -> Maybe BlockAuthenticationKey
     -> ((Logger -> Worker) -> IO ())
     -> IO ()
-withOnDemandWorker logger port host inner = do
+withOnDemandWorker logger port host key inner = do
     miningGoals <- newTVarIO (HashMap.empty @ChainId @Word)
-    race (server miningGoals) (inner (worker miningGoals)) >>= \case
+    race (server miningGoals) (inner (worker miningGoals key)) >>= \case
         Left _ -> writeLog logger L.Error "server exited unexpectedly"
         Right _ -> writeLog logger L.Error "mining loop exited unexpectedly"
   where
@@ -66,11 +68,15 @@ withOnDemandWorker logger port host inner = do
         & Warp.setPort (fromIntegral port)
         & Warp.setHost host
 
-worker :: TVar (HashMap ChainId Word) -> Logger -> Worker
-worker goalsRef minerLogger _nonce _target cid work = do
+worker
+    :: TVar (HashMap ChainId Word)
+    -> Maybe BlockAuthenticationKey
+    -> Logger
+    -> Worker
+worker goalsRef key minerLogger _nonce _target cid work = do
     atomically $ do
         goals <- readTVar goalsRef
         guard (any (/= 0) goals)
         writeTVar goalsRef (HashMap.adjust (\g -> if g == 0 then 0 else pred g) cid goals)
     writeLog minerLogger L.Info $ "block demanded for chain " <> T.pack (show cid)
-    return work
+    return $! authenticateWork key work

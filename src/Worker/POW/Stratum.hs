@@ -91,7 +91,7 @@ runJob ctx logger _nonce trg work = mask $ \umask -> do
     -- block.
     checkJob job = do
         nonce <- takeMVar (_jobResult job) -- at this point the mvar is available again
-        !w <- injectNonce nonce (_jobWork job)
+        let !w = injectNonce nonce (_jobWork job)
         checkTarget (_jobTarget job) w >>= \case
             True -> do
                 writeLog logger L.Info $ "submitted job " <> sshow (_jobId job)
