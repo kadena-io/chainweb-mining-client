@@ -2,6 +2,14 @@ packages: .
 allow-newer:
     streaming-events:*
 
+package hashes
+    extra-include-dirs:
+      /opt/local/include
+      /usr/local/opt/openssl/include
+    extra-lib-dirs:
+      /opt/local/lib
+      /usr/local/opt/openssl/lib/
+
 source-repository-package
     type: git
     location: https://github.com/kadena-io/deeproute.git

@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -42,6 +43,7 @@ import Control.Retry
 import Crypto.Hash.Algorithms (Blake2s_256)
 import qualified Crypto.PubKey.Ed25519 as C
 
+import Data.Bifunctor
 import qualified Data.ByteArray.Encoding as BA
 import Data.Bytes.Get
 import Data.Bytes.Put
@@ -90,6 +92,7 @@ import Worker.External
 import Worker.ConstantDelay
 import Worker.SimulatedMiner
 import Worker.OnDemand
+import WorkerUtils
 import qualified Worker.POW.Stratum as Stratum
 import qualified Worker.POW.Stratum.Server as Stratum
 
@@ -262,6 +265,7 @@ data Config = Config
     , _configOnDemandPort :: !Port
     , _configOnDemandInterface :: !HostPreference
     , _configConstantDelayBlockTime :: !Natural
+    , _configBlockAuthenticationKey :: !(Maybe BlockAuthenticationKey)
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -287,6 +291,7 @@ defaultConfig = Config
     , _configOnDemandPort = 1917
     , _configOnDemandInterface = "*"
     , _configConstantDelayBlockTime = 30
+    , _configBlockAuthenticationKey = Nothing
     }
 
 instance ToJSON Config where
@@ -309,6 +314,7 @@ instance ToJSON Config where
         , "onDemandPort" .= _configOnDemandPort c
         , "onDemandInterface" .= _configOnDemandInterface c
         , "constantDelayBlockTime" .= _configConstantDelayBlockTime c
+        , "BlockAuthenticationKey" .= _configBlockAuthenticationKey c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -331,6 +337,7 @@ instance FromJSON (Config -> Config) where
         <*< configOnDemandPort ..: "onDemandPort" % o
         <*< configOnDemandInterface ..: "onDemandInterface" % o
         <*< configConstantDelayBlockTime ..: "constantDelayBlockTime" % o
+        <*< configBlockAuthenticationKey ..: "blockAuthenticationKey" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -403,6 +410,14 @@ parseConfig = id
     <*< configOnDemandPort .:: option jsonReader
       % long "on-demand-port"
       <> help "port on which the on-demand mining server listens"
+    <*< configBlockAuthenticationKey .:: fmap Just . option (eitherReader $ first T.unpack . readBlockAuthenticationKeyHex . T.pack)
+        % long "block-authentication-key"
+        <> help "if provided non-PoW miners and the CPU miner authenticate the nonce with this key"
+        <> metavar "HEX[32]"
+
+validateConfig :: ConfigValidation Config []
+validateConfig _c = do
+    return ()
 
 -- -------------------------------------------------------------------------- --
 -- HTTP Retry Logic
@@ -793,8 +808,8 @@ genKeys = do
 -- -------------------------------------------------------------------------- --
 -- Main
 
-mainInfo :: ProgramInfo Config
-mainInfo = programInfo "Kadena Chainweb Mining Client" parseConfig defaultConfig
+mainInfo :: ProgramInfoValidate Config []
+mainInfo = programInfoValidate "Kadena Chainweb Mining Client" parseConfig defaultConfig validateConfig
 
 -- | TODO: validate the configuration:
 --
@@ -827,17 +842,31 @@ run conf logger = do
 
     workerRate = _getUnitPrefixed (_configHashRate conf) / fromIntegral (_configThreadCount conf)
 
+    maybeKey = _configBlockAuthenticationKey conf
+
     -- provide the inner computation with an initialized worker
     withWorker f = case _configWorker conf of
+
+        -- Non-PoW Workers
+
         SimulatedMinerWorker -> do
             rng <- MWC.createSystemRandom
-            f $ \l -> simulatedMinerWorker l rng workerRate
+            f $ \l -> simulatedMinerWorker l rng workerRate maybeKey
+
         ConstantDelayWorker -> do
-            f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf)
+            f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf) maybeKey
+
         OnDemandWorker -> do
-            withOnDemandWorker logger (_configOnDemandPort conf) (_configOnDemandInterface conf) f
+            withOnDemandWorker logger (_configOnDemandPort conf) (_configOnDemandInterface conf) maybeKey f
+
+        -- PoW Workers
+
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
-        CpuWorker -> f $ cpuWorker @Blake2s_256
+
+        CpuWorker -> case maybeKey of
+            Nothing -> f $ cpuWorker @Blake2s_256
+            Just key -> f $ authenticatedCpuWorker @Blake2s_256 key
+
         StratumWorker -> Stratum.withStratumServer
           logger
           (_configStratumPort conf)
