@@ -118,8 +118,8 @@ authenticedBlockMiningLoop key buf _ checkNonce = go
             False -> yield >> go
                 -- we'd rather block by something like 500ns, but
                 -- that's not supported by threadDelay.
-                -- altneratively we could spin without computing the hash,
-                -- but this workier is only for testing anyways.
+                -- alternatively we could spin without computing the hash,
+                -- but this worker is only for testing anyways.
 
 -- -------------------------------------------------------------------------- --
 -- Internal
