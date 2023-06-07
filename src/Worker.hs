@@ -85,7 +85,7 @@ instance Read Work where
         return (Work b)
 
 decodeWork :: MonadGet m => m Work
-decodeWork = Work . BS.toShort <$> getBytes 286
+decodeWork = Work . BS.toShort <$> getBytes 250
 {-# INLINE decodeWork #-}
 
 encodeWork :: MonadPut m => Work -> m ()
