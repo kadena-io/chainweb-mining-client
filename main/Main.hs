@@ -262,6 +262,7 @@ data Config = Config
     , _configOnDemandPort :: !Port
     , _configOnDemandInterface :: !HostPreference
     , _configConstantDelayBlockTime :: !Natural
+    , _configDefaultHTTPTimeout :: !Int
     }
     deriving (Show, Eq, Ord, Generic)
 
@@ -287,6 +288,7 @@ defaultConfig = Config
     , _configOnDemandPort = 1917
     , _configOnDemandInterface = "*"
     , _configConstantDelayBlockTime = 30
+    , _configDefaultHTTPTimeout = 1000000
     }
 
 instance ToJSON Config where
@@ -309,6 +311,7 @@ instance ToJSON Config where
         , "onDemandPort" .= _configOnDemandPort c
         , "onDemandInterface" .= _configOnDemandInterface c
         , "constantDelayBlockTime" .= _configConstantDelayBlockTime c
+        , "defaultHTTPTimeout" .= _configDefaultHTTPTimeout c
         ]
 
 instance FromJSON (Config -> Config) where
@@ -331,6 +334,7 @@ instance FromJSON (Config -> Config) where
         <*< configOnDemandPort ..: "onDemandPort" % o
         <*< configOnDemandInterface ..: "onDemandInterface" % o
         <*< configConstantDelayBlockTime ..: "constantDelayBlockTime" % o
+        <*< configDefaultHTTPTimeout ..: "defaultHTTPTimeout" % o
       where
         parseLogLevel = withText "LogLevel" $ return . logLevelFromText
 
@@ -403,6 +407,9 @@ parseConfig = id
     <*< configOnDemandPort .:: option jsonReader
       % long "on-demand-port"
       <> help "port on which the on-demand mining server listens"
+    <*< configDefaultHTTPTimeout .:: option auto
+      % long "default-http-timeout"
+      <> help "the default timeout of HTTP requests made by the miner, for example to the node"
 
 -- -------------------------------------------------------------------------- --
 -- HTTP Retry Logic
@@ -810,7 +817,7 @@ main = runWithPkgInfoConfiguration mainInfo pkgInfo $ \conf ->
 run :: Config -> Logger -> IO ()
 run conf logger = do
     mgr <- HTTP.newManager (HTTP.mkManagerSettings tlsSettings Nothing)
-        { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro 1000000 }
+        { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro (_configDefaultHTTPTimeout conf) }
             -- We don't want to wait too long, because latencies matter in
             -- mining. NOTE, however, that for large blocks it can take a while
             -- to get new work. This can be an issue with public mining mode.
