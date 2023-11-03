@@ -1,11 +1,13 @@
 {
   description = "Chainweb Mining Client";
-  inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  outputs = { self, nixpkgs, flake-utils, haskellNix }:
+  inputs = {
+    hs-nix-infra.url = "github:kadena-io/hs-nix-infra";
+    flake-utils.url = "github:numtide/flake-utils";
+  };
+  outputs = { self, hs-nix-infra, flake-utils,  }:
     flake-utils.lib.eachDefaultSystem (system:
     let
+      inherit (hs-nix-infra) nixpkgs haskellNix;
       overlays = [ haskellNix.overlay
         (final: prev: {
           # This overlay adds our project to pkgs
