@@ -1,7 +1,7 @@
 {
   description = "Chainweb Mining Client";
   inputs = {
-    hs-nix-infra.url = "github:kadena-io/hs-nix-infra";
+    hs-nix-infra.url = "github:kadena-io/hs-nix-infra/enis/metadata-experiments";
     flake-utils.url = "github:numtide/flake-utils";
   };
   outputs = { self, hs-nix-infra, flake-utils,  }:
@@ -32,9 +32,18 @@
         })
       ];
       pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
-      flake = pkgs.chainweb-mining-client.flake {};
-    in flake // {
+      project = pkgs.chainweb-mining-client;
+      flake = project.flake {};
+    in {
       # Built by `nix build .`
       packages.default = flake.packages."chainweb-mining-client:exe:chainweb-mining-client";
+      packages.recursive = with hs-nix-infra.lib.recursive system;
+        wrapRecursiveWithMeta "chainweb-mining-client" "${wrapFlake self}.default";
+
+      devShell = flake.devShell;
+
+      # Other flake outputs provided by haskellNix can be accessed through
+      # this project output
+      inherit project;
     });
 }
