@@ -6,3 +6,4 @@ source-repository-package
     type: git
     location: https://github.com/kadena-io/deeproute.git
     tag: 856be917bf162a769d9082c26700af4bdbb87d49
+    --sha256: sha256-FHLl0gkwr+rtu42XBdVRD9k3bnhYl01GZAE0lz0V8wI=
