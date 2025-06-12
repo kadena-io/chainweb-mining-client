@@ -32,7 +32,7 @@ import Configuration.Utils hiding (Error)
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
-import Control.Exception (IOException, SomeAsyncException, throwIO)
+import Control.Exception (IOException, SomeAsyncException (..), throwIO, asyncExceptionFromException)
 import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.Monad.Catch
@@ -523,6 +523,13 @@ getNodeVersion conf mgr = do
         Just (String x) -> return $ ChainwebVersion x
         _ -> error "failed to parse chainweb version from node info"
 
+getChainCount :: Config -> HTTP.Manager -> IO Natural
+getChainCount conf mgr = do
+    i <- getInfo conf mgr
+    case HM.lookup "nodeNumberOfChains" i of
+        Just (Number x) -> return $ floor x
+        _ -> error "failed to parse chain count from node info"
+
 -- | Get new work from the chainweb node (for some available chain)
 --
 -- We don't retry here. If this fails, we loop around.
@@ -689,8 +696,12 @@ getTrigger conf ver logger mgr (UpdateMap v) k = modifyMVar v $ \m -> case HM.lo
             -- a stream gets stale without failing.
 
         return $ Trigger $ pollSTM a >>= \case
-            Just (Right ()) -> return StreamClosed
-            Just (Left e) -> return $ StreamFailed e
+            Just (Right ()) ->
+                return StreamClosed
+            Just (Left (asyncExceptionFromException -> Just e@SomeAsyncException{})) ->
+                throwM e
+            Just (Left e) ->
+                return $ StreamFailed e
             Nothing -> do
                 isTimeout <- readTVar timeoutVar
                 isUpdate <- (/= cur) <$> readTVar var
@@ -825,7 +836,7 @@ run conf logger = do
             -- considered deprecated.
     ver <- getNodeVersion conf mgr
     updateMap <- newUpdateMap
-    withWorker $ \worker -> do
+    withWorker mgr $ \worker -> do
         forConcurrently_ [0 .. _configThreadCount conf - 1] $ \i ->
             withLogTag logger ("Thread " <> sshow i) $ \taggedLogger ->
                 miningLoop conf ver taggedLogger mgr updateMap (worker taggedLogger)
@@ -835,12 +846,16 @@ run conf logger = do
     workerRate = _getUnitPrefixed (_configHashRate conf) / fromIntegral (_configThreadCount conf)
 
     -- provide the inner computation with an initialized worker
-    withWorker f = case _configWorker conf of
+    withWorker mgr f = case _configWorker conf of
         SimulatedMinerWorker -> do
             rng <- MWC.createSystemRandom
             f $ \l -> simulatedMinerWorker l rng workerRate
         ConstantDelayWorker -> do
-            f $ \l -> constantDelayWorker l (_configConstantDelayBlockTime conf)
+            numChains <- getChainCount conf mgr
+            let actualDelay =
+                    (_configConstantDelayBlockTime conf * 1_000_000 * _configThreadCount conf)
+                        `div` fromIntegral numChains
+            f $ \l -> constantDelayWorker l actualDelay
         OnDemandWorker -> do
             withOnDemandWorker logger (_configOnDemandPort conf) (_configOnDemandInterface conf) f
         ExternalWorker -> f $ \l -> externalWorker l (_configExternalWorkerCommand conf)
@@ -852,4 +867,3 @@ run conf logger = do
           (_configStratumDifficulty conf)
           (_configStratumRate conf)
           (f . Stratum.submitWork)
-

@@ -38,9 +38,8 @@ import Worker
 --
 constantDelayWorker :: Logger -> Natural -> Worker
 constantDelayWorker logger delay _nonce _target _cid work = do
-    logg Info $ "solve time (seconds): " <> T.pack (show delay)
-    threadDelay ((1_000000 * fromIntegral delay) `div` 20)
+    logg Info $ "solve time (microseconds): " <> T.pack (show delay)
+    threadDelay (fromIntegral delay)
     return work
   where
     logg = writeLog logger
-

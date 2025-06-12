@@ -228,4 +228,3 @@ withLogger !level inner = do
             msg <- readChan queue
             decrementCounter sizeRef
             T.putStrLn $ formatLogMessage msg
-

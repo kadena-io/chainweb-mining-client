@@ -11,9 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.10.7', '9.0.2', '9.2', '9.4']
+        ghc: ['9.6']
         cabal: ['3.8']
-        os: ['ubuntu-20.04', 'ubuntu-22.04', 'macOS-latest']
+        os: ['ubuntu-22.04', 'macOS-latest']
 
     steps:
     - name: Set Variables
@@ -29,7 +29,7 @@ jobs:
 
     # Setup
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Install GHC and Cabal
       uses: haskell/actions/setup@v2
       with:
@@ -39,7 +39,7 @@ jobs:
       run: |
         ghc --version
         cabal --version
-    - uses: actions/cache@v3
+    - uses: actions/cache@v4
       name: Cache dist-newstyle
       with:
         path: |
@@ -79,21 +79,21 @@ jobs:
         cp cabal.project.freeze $ARTIFACTS_DIR
         tar -C ./artifacts/ -czf "$ARTIFACTS_ARCHIVE" chainweb-mining-client
     - name: Safe artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: ${{ env.ARTIFACTS_ARCHIVE }}
         if-no-files-found: error
 
   # ########################################################################## #
-  docker-image:
+  nocker-image:
     name: Build and publish docker image
     needs: [build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2"]
+        ghc: ["9.6"]
         os: ["ubuntu-22.04"]
     env:
       GHC_VERSION: ${{ matrix.ghc }}
@@ -112,7 +112,7 @@ jobs:
         EOF
 
     - name: Get build artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: ${{ env.ARTIFACTS_NAME }}
         path: .

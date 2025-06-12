@@ -159,7 +159,7 @@ newtype Error = Error (Int, T.Text, A.Value)
 --
 -- In this implementation we limit the value to be an integral number of @null@.
 --
-requestProperties :: A.KeyValue kv => A.ToJSON a => T.Text -> a -> Maybe MsgId -> [kv]
+requestProperties :: A.KeyValue e kv => A.ToJSON a => T.Text -> a -> Maybe MsgId -> [kv]
 requestProperties method params i =
     [ "method" A..= method
     , "params" A..= params
@@ -190,7 +190,7 @@ requestProperties method params i =
 -- In this implementation we limit the value to be an integral number or @null@.
 --
 responseProperties
-    :: A.KeyValue kv
+    :: A.KeyValue e kv
     => A.ToJSON a
     => A.ToJSON b
     => MsgId
@@ -216,4 +216,3 @@ parseResponse' paramsParser o = o A..: "error" >>= \case
     Nothing -> Right <$> (o A..: "result" >>= paramsParser)
     Just e -> return $ Left e
 {-# INLINE parseResponse' #-}
-

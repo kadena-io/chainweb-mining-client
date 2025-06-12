@@ -31,6 +31,7 @@ import Control.Monad.Catch
 import Control.Monad.IO.Class
 
 import qualified Data.Aeson as A
+import qualified Data.Aeson.Parser as A
 import qualified Data.Aeson.Types as A
 import qualified Data.Attoparsec.ByteString as P
 import qualified Data.ByteString as B
