@@ -2,6 +2,16 @@ name: Build and publish application binaries
 
 on: [push]
 
+env:
+  S3_ARTIFACT_BUCKET: kadena-cabal-cache
+  S3_ARTIFACT_FOLDER: chainweb-node
+
+  USE_CABAL_CACHE: true
+
+  AWS_ACCESS_KEY_ID: ${{ secrets.kadena_cabal_cache_aws_access_key_id }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.kadena_cabal_cache_aws_secret_access_key }}
+  AWS_DEFAULT_REGION: us-east-1
+
 jobs:
 
   # ########################################################################## #
@@ -56,6 +66,16 @@ jobs:
         rm -rf dist-newstyle/build/*/ghc-*/chainweb-mining-client-*/build/chainweb-mining-client/chainweb-mining-client
         cabal build all --dry-run --enable-tests
         cabal freeze --enable-tests
+    - name: Sync from cabal cache
+      if: env.USE_CABAL_CACHE == 'true'
+      uses: larskuhtz/cabal-cache-action@4b537195b33898fcd9adc62cee2a44986fd7b1b6
+      with:
+        bucket: "kadena-cabal-cache"
+        region: "us-east-1"
+        folder: "packages/${{ matrix.os }}"
+        store_path: ${{ steps.setup.outputs.cabal-store }}
+        aws_access_key_id: "${{ secrets.kadena_cabal_cache_aws_access_key_id }}"
+        aws_secret_access_key: "${{ secrets.kadena_cabal_cache_aws_secret_access_key }}"
     - name: Install build dependencies
       run: cabal build --only-dependencies --enable-tests
     - name: Build
