@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -159,7 +160,7 @@ newtype Error = Error (Int, T.Text, A.Value)
 --
 -- In this implementation we limit the value to be an integral number of @null@.
 --
-requestProperties :: A.KeyValue kv => A.ToJSON a => T.Text -> a -> Maybe MsgId -> [kv]
+requestProperties :: (A.KeyValue k kv, A.ToJSON a) => T.Text -> a -> Maybe MsgId -> [kv]
 requestProperties method params i =
     [ "method" A..= method
     , "params" A..= params
@@ -168,6 +169,7 @@ requestProperties method params i =
 {-# INLINE requestProperties #-}
 {-# SPECIALIZE requestProperties :: A.ToJSON a => T.Text -> a -> Maybe MsgId -> [A.Series] #-}
 {-# SPECIALIZE requestProperties :: A.ToJSON a => T.Text -> a -> Maybe MsgId -> [A.Pair] #-}
+
 
 -- -------------------------------------------------------------------------- --
 -- | JSON RPC Result Messages
@@ -190,9 +192,7 @@ requestProperties method params i =
 -- In this implementation we limit the value to be an integral number or @null@.
 --
 responseProperties
-    :: A.KeyValue kv
-    => A.ToJSON a
-    => A.ToJSON b
+    :: (A.KeyValue k kv, A.ToJSON a, A.ToJSON b)
     => MsgId
     -> Either a b
     -> [kv]
@@ -202,8 +202,8 @@ responseProperties i r =
     , "id" A..= i
     ]
 {-# INLINE responseProperties #-}
-{-# SPECIALIZE responseProperties :: A.ToJSON a => A.ToJSON b => MsgId -> Either a b -> [A.Series] #-}
-{-# SPECIALIZE responseProperties :: A.ToJSON a => A.ToJSON b => MsgId -> Either a b -> [A.Pair] #-}
+{-# SPECIALIZE responseProperties :: (A.ToJSON a, A.ToJSON b) => MsgId -> Either a b -> [A.Series] #-}
+{-# SPECIALIZE responseProperties :: (A.ToJSON a, A.ToJSON b) => MsgId -> Either a b -> [A.Pair] #-}
 
 parseResponse :: A.FromJSON a => A.FromJSON b => A.Object -> A.Parser (Either a b)
 parseResponse o = o A..: "error" >>= \case
